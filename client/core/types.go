@@ -51,8 +51,9 @@ type PeerConn struct {
 	Mode      string       // "connecting", "direct", "relay"
 	UDPAddr   *net.UDPAddr // peer's public UDP address
 	UDPConn   *net.UDPConn // shared UDP socket
+	DirectTCP net.Conn     // direct TCP connection (after hole punch upgrade)
 	LastPunch time.Time
-	Crypto    *PeerCrypto  // encryption state (nil = not yet established)
+	Crypto    *PeerCrypto  // encryption state
 }
 
 // TunnelOpen is sent to request opening a tunnel to a peer's local port.

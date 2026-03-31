@@ -394,27 +394,8 @@ func (c *Client) sendRelay(to string, innerType string, innerPayload interface{}
 	})
 }
 
-// sendTunnelData sends tunnel data — P2P if available, relay otherwise.
+// sendTunnelData sends tunnel data via WebSocket relay.
 func (c *Client) sendTunnelData(peerID, tunnelID string, data []byte) error {
-	c.peerConnsMu.RLock()
-	pc := c.peerConns[peerID]
-	isP2P := pc != nil && pc.Mode == "direct" && pc.UDPAddr != nil && c.udpConn != nil
-	c.peerConnsMu.RUnlock()
-
-	forceRelay := false
-	c.tunnelsMu.RLock()
-	if tc, ok := c.tunnels[tunnelID]; ok && tc.Forward != nil {
-		tc.Forward.Mu.Lock()
-		forceRelay = tc.Forward.ForceRelay
-		tc.Forward.Mu.Unlock()
-	}
-	c.tunnelsMu.RUnlock()
-
-	if isP2P && !forceRelay {
-		c.sendUDPDirect(pc, tunnelID, data)
-		return nil
-	}
-
 	encoded := base64.StdEncoding.EncodeToString(data)
 	return c.sendRelay(peerID, "tunnel_data", TunnelData{
 		TunnelID: tunnelID,

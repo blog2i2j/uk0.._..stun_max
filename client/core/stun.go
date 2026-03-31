@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"strings"
 	"sync"
@@ -206,6 +207,9 @@ func (c *Client) DiscoverSTUN(servers []string) error {
 		// Start retry loop for relay peers
 		c.wg.Add(1)
 		go c.startRetryLoop()
+
+		// Start direct TCP listener for P2P upgrades
+		c.startDirectTCPListener()
 
 		// Broadcast our STUN info to the room
 		c.sendStunInfo("")
@@ -415,7 +419,6 @@ func (c *Client) onHolePunchSuccess(peerID string, addr *net.UDPAddr) {
 	pc.Mode = "direct"
 	pc.UDPAddr = addr
 
-	// Generate crypto if not yet done
 	if pc.Crypto == nil {
 		crypto, err := NewPeerCrypto()
 		if err == nil {
@@ -426,9 +429,11 @@ func (c *Client) onHolePunchSuccess(peerID string, addr *net.UDPAddr) {
 
 	c.emit(EventHolePunchSuccess, PeerEvent{ID: peerID, Status: "direct"})
 	c.sendStatusUpdate("direct")
-
-	// Send our public key for encrypted channel
 	c.sendKeyExchange(peerID)
+
+	// Attempt direct TCP connection to peer for reliable tunnel data.
+	// This runs in background — if it fails, relay is used automatically.
+	go c.attemptDirectTCP(peerID, addr)
 }
 
 // sendKeyExchange sends our X25519 public key to a peer over UDP.
@@ -633,6 +638,106 @@ func (c *Client) handleEncryptedUDPData(tunnelID string, encrypted []byte, addr 
 	c.handleUDPTunnelData(tunnelID, encrypted)
 }
 
+// attemptDirectTCP tries to establish a direct TCP connection to the peer.
+// On LAN this connects instantly. On WAN it may fail (NAT blocks TCP).
+// If successful, tunnel data uses this TCP connection instead of WS relay.
+func (c *Client) attemptDirectTCP(peerID string, addr *net.UDPAddr) {
+	// Try connecting to the peer's TCP listener (same IP, port+1)
+	tcpAddr := net.JoinHostPort(addr.IP.String(), fmt.Sprintf("%d", addr.Port+1))
+
+	conn, err := net.DialTimeout("tcp", tcpAddr, 3*time.Second)
+	if err != nil {
+		if c.verbose {
+			c.emit(EventLog, LogEvent{Level: "info", Message: fmt.Sprintf("Direct TCP to %s failed (using relay): %v", shortID(peerID), err)})
+		}
+		return
+	}
+
+	// Send our ID so the peer knows who connected
+	conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
+	conn.Write([]byte("STUNMAX:" + c.MyID + "\n"))
+
+	c.peerConnsMu.Lock()
+	pc := c.peerConns[peerID]
+	if pc != nil {
+		pc.DirectTCP = conn
+	}
+	c.peerConnsMu.Unlock()
+
+	c.emit(EventLog, LogEvent{Level: "info", Message: fmt.Sprintf("Direct TCP established with %s", shortID(peerID))})
+
+	// Start reading from this direct TCP connection
+	c.wg.Add(1)
+	go c.directTCPReadLoop(conn)
+}
+
+// startDirectTCPListener listens for incoming direct TCP connections from peers.
+func (c *Client) startDirectTCPListener() {
+	if c.udpConn == nil {
+		return
+	}
+	// Listen on UDP port + 1
+	localPort := c.udpConn.LocalAddr().(*net.UDPAddr).Port + 1
+	ln, err := net.Listen("tcp", fmt.Sprintf(":%d", localPort))
+	if err != nil {
+		if c.verbose {
+			c.emit(EventLog, LogEvent{Level: "info", Message: fmt.Sprintf("Direct TCP listener failed: %v", err)})
+		}
+		return
+	}
+
+	c.wg.Add(1)
+	go func() {
+		defer c.wg.Done()
+		defer ln.Close()
+		for {
+			select {
+			case <-c.done:
+				return
+			default:
+			}
+			ln.(*net.TCPListener).SetDeadline(time.Now().Add(2 * time.Second))
+			conn, err := ln.Accept()
+			if err != nil {
+				if ne, ok := err.(net.Error); ok && ne.Timeout() {
+					continue
+				}
+				return
+			}
+
+			// Read peer ID
+			conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+			buf := make([]byte, 256)
+			n, err := conn.Read(buf)
+			if err != nil {
+				conn.Close()
+				continue
+			}
+			line := strings.TrimSpace(string(buf[:n]))
+			if !strings.HasPrefix(line, "STUNMAX:") {
+				conn.Close()
+				continue
+			}
+			peerID := strings.TrimPrefix(line, "STUNMAX:")
+			peerID = strings.TrimSpace(peerID)
+
+			c.peerConnsMu.Lock()
+			pc, exists := c.peerConns[peerID]
+			if exists && pc.DirectTCP == nil {
+				pc.DirectTCP = conn
+				c.peerConnsMu.Unlock()
+				c.emit(EventLog, LogEvent{Level: "info", Message: fmt.Sprintf("Direct TCP accepted from %s", shortID(peerID))})
+				// Start reading from this direct TCP connection
+				c.wg.Add(1)
+				go c.directTCPReadLoop(conn)
+			} else {
+				c.peerConnsMu.Unlock()
+				conn.Close()
+			}
+		}
+	}()
+}
+
 func (c *Client) startRetryLoop() {
 	defer c.wg.Done()
 
@@ -680,5 +785,54 @@ func getLocalIP() string {
 	}
 	defer conn.Close()
 	return conn.LocalAddr().(*net.UDPAddr).IP.String()
+}
+
+// directTCPReadLoop reads framed tunnel data from a direct TCP connection.
+// Frame format: [8-byte tunnelID][4-byte length][data]
+func (c *Client) directTCPReadLoop(conn net.Conn) {
+	defer c.wg.Done()
+	defer conn.Close()
+
+	header := make([]byte, 12)
+	for {
+		select {
+		case <-c.done:
+			return
+		default:
+		}
+
+		conn.SetReadDeadline(time.Now().Add(10 * time.Minute))
+
+		// Read header: 8-byte tunnelID + 4-byte length
+		if _, err := io.ReadFull(conn, header); err != nil {
+			return
+		}
+
+		tunnelID := tunnelIDFromBytes(header[:8])
+		dataLen := int(header[8])<<24 | int(header[9])<<16 | int(header[10])<<8 | int(header[11])
+		if dataLen <= 0 || dataLen > 256*1024 {
+			return // invalid frame
+		}
+
+		// Read data
+		data := make([]byte, dataLen)
+		if _, err := io.ReadFull(conn, data); err != nil {
+			return
+		}
+
+		// Write to tunnel
+		c.tunnelsMu.RLock()
+		tc, ok := c.tunnels[tunnelID]
+		c.tunnelsMu.RUnlock()
+		if !ok {
+			continue
+		}
+
+		if tc.Forward != nil {
+			atomic.AddInt64(&tc.Forward.BytesDown, int64(dataLen))
+		}
+		tc.Conn.SetWriteDeadline(time.Now().Add(30 * time.Second))
+		tc.Conn.Write(data)
+	}
 }
 
