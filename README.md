@@ -25,26 +25,116 @@ P2P tunnel system with STUN hole punching and automatic server relay fallback. E
 
 ## Quick Start
 
+
+![img.png](img/img_1.png)
+
+
 ![img.png](img/img.png)
+
+
 
 
 ### 1. Deploy Server
 
+#### Quick Run (test)
+
 ```bash
-# Build
+./build.sh
+./build/stun_max-server-linux-amd64 --addr :8080 --web-dir ./build/web
+# Password printed to console
+```
+
+#### Production Deploy (systemd)
+
+Upload binaries to your server:
+
+```bash
+# Build on local machine
 ./build.sh
 
-# Run (password auto-generated, printed to console)
-./build/stun_max-server-linux-amd64 --addr :8080 --web-dir ./build/web
-
-# Or with custom password
-./build/stun_max-server-linux-amd64 --addr :8080 --web-password YOUR_PASSWORD --web-dir ./build/web
+# Upload
+scp build/stun_max-server-linux-amd64 root@YOUR_SERVER:/usr/local/bin/stun_max-server
+scp build/stun_max-stunserver-linux-amd64 root@YOUR_SERVER:/usr/local/bin/stun_max-stunserver
+ssh root@YOUR_SERVER "mkdir -p /opt/stun_max/web"
+scp -r build/web/* root@YOUR_SERVER:/opt/stun_max/web/
 ```
 
-Optional: deploy STUN server on the same host (improves hole punch for China users):
+Create systemd service for the signal server:
+
 ```bash
-./build/stun_max-stunserver-linux-amd64 --addr :3478
+cat > /etc/systemd/system/stun-max.service << 'EOF'
+[Unit]
+Description=STUN Max Signal Server
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/stun_max-server --addr :8080 --web-dir /opt/stun_max/web
+WorkingDirectory=/opt/stun_max
+Restart=always
+RestartSec=3
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+systemctl daemon-reload
+systemctl enable stun-max
+systemctl start stun-max
 ```
+
+View the auto-generated dashboard password:
+
+```bash
+journalctl -u stun-max | grep Password
+```
+
+Optional: deploy STUN server (improves hole punch success, especially in China):
+
+```bash
+cat > /etc/systemd/system/stun-max-stun.service << 'EOF'
+[Unit]
+Description=STUN Max - STUN Server
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/stun_max-stunserver --addr :3478
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+systemctl daemon-reload
+systemctl enable stun-max-stun
+systemctl start stun-max-stun
+```
+
+#### Firewall
+
+Open these ports on your server:
+
+| Port | Protocol | Service |
+|------|----------|---------|
+| 8080 | TCP | Signal server (WebSocket + Dashboard) |
+| 3478 | UDP | STUN server (optional) |
+
+```bash
+# UFW
+ufw allow 8080/tcp
+ufw allow 3478/udp
+
+# Or iptables
+iptables -A INPUT -p tcp --dport 8080 -j ACCEPT
+iptables -A INPUT -p udp --dport 3478 -j ACCEPT
+```
+
+#### Create a Room
+
+Open `http://YOUR_SERVER:8080` in browser, login with the password, then create a room with a name and password. Clients must use the exact room name and password to join.
 
 ### 2. Connect Clients
 
