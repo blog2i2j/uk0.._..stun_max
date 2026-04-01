@@ -24,6 +24,7 @@ var publicSTUNServers = []string{
 
 // SettingsPanel manages access control settings.
 type SettingsPanel struct {
+	List         widget.List
 	AllowForward widget.Bool
 	LocalOnly    widget.Bool
 	Autostart    widget.Bool
@@ -50,6 +51,7 @@ func (s *SettingsPanel) init(a *App) {
 		return
 	}
 	s.inited = true
+	s.List.Axis = layout.Vertical
 	s.AllowForward.Value = true
 	s.LocalOnly.Value = true
 	s.Autostart.Value = GetAutostart()
@@ -192,56 +194,52 @@ func (s *SettingsPanel) Layout(gtx layout.Context, th *material.Theme, a *App) l
 		}
 	}
 
-	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+	type settingsItem func(gtx layout.Context) layout.Dimensions
+	items := []settingsItem{
+		func(gtx layout.Context) layout.Dimensions {
 			return s.layoutSettingCard(gtx, th,
 				"Allow Incoming Forwards",
 				"When enabled, other peers can open tunnels to your local services.",
 				&s.AllowForward,
 			)
-		}),
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return layout.Inset{Top: unit.Dp(12)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				return s.layoutSettingCard(gtx, th,
-					"Local Only Mode",
-					"Only allow tunnels to localhost/127.0.0.1. Prevents LAN access.",
-					&s.LocalOnly,
-				)
-			})
-		}),
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return layout.Inset{Top: unit.Dp(12)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				return s.layoutSettingCard(gtx, th,
-					"Start on Boot (Windows)",
-					"Launch STUN Max as administrator when Windows starts. Uses Task Scheduler with highest privileges.",
-					&s.Autostart,
-				)
-			})
-		}),
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return layout.Inset{Top: unit.Dp(12)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				return s.layoutSettingCard(gtx, th,
-					"Auto Connect",
-					"Automatically connect to the last room on launch. If connection fails, stays on the login screen.",
-					&s.AutoConnect,
-				)
-			})
-		}),
-		// Auto Login (Windows only)
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			if !AutoLoginSupported() {
-				return layout.Dimensions{}
-			}
-			return layout.Inset{Top: unit.Dp(12)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				return s.layoutAutoLoginCard(gtx, th)
-			})
-		}),
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return layout.Inset{Top: unit.Dp(12)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				return s.layoutSTUNCard(gtx, th)
-			})
-		}),
-	)
+		},
+		func(gtx layout.Context) layout.Dimensions {
+			return s.layoutSettingCard(gtx, th,
+				"Local Only Mode",
+				"Only allow tunnels to localhost/127.0.0.1. Prevents LAN access.",
+				&s.LocalOnly,
+			)
+		},
+		func(gtx layout.Context) layout.Dimensions {
+			return s.layoutSettingCard(gtx, th,
+				"Start on Boot (Windows)",
+				"Launch STUN Max as administrator when Windows starts. Uses Task Scheduler with highest privileges.",
+				&s.Autostart,
+			)
+		},
+		func(gtx layout.Context) layout.Dimensions {
+			return s.layoutSettingCard(gtx, th,
+				"Auto Connect",
+				"Automatically connect to the last room on launch. If connection fails, stays on the login screen.",
+				&s.AutoConnect,
+			)
+		},
+	}
+	if AutoLoginSupported() {
+		items = append(items, func(gtx layout.Context) layout.Dimensions {
+			return s.layoutAutoLoginCard(gtx, th)
+		})
+	}
+	items = append(items, func(gtx layout.Context) layout.Dimensions {
+		return s.layoutSTUNCard(gtx, th)
+	})
+
+	list := material.List(th, &s.List)
+	return list.Layout(gtx, len(items), func(gtx layout.Context, i int) layout.Dimensions {
+		return layout.Inset{Bottom: unit.Dp(12)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			return items[i](gtx)
+		})
+	})
 }
 
 func (s *SettingsPanel) layoutAutoLoginCard(gtx layout.Context, th *material.Theme) layout.Dimensions {
