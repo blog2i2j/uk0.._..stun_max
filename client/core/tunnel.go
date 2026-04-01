@@ -32,9 +32,10 @@ func (c *Client) StartForward(peerID, host string, remotePort, localPort int) er
 	}
 	c.forwardsMu.RUnlock()
 
+	// Check if port is available on the system before binding
 	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", localPort))
 	if err != nil {
-		return fmt.Errorf("listen :%d: %w", localPort, err)
+		return fmt.Errorf("port %d unavailable (already in use by another program)", localPort)
 	}
 
 	peerName := shortID(fullID)

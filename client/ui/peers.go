@@ -3,6 +3,7 @@ package ui
 import (
 	"image"
 	"image/color"
+	"sort"
 
 	"gioui.org/layout"
 	"gioui.org/op/clip"
@@ -62,6 +63,16 @@ func (p *PeersPanel) Layout(gtx layout.Context, th *material.Theme, a *App) layo
 		})
 	}
 	a.mu.Unlock()
+
+	// Stable sort: self first, then alphabetical by name
+	sort.SliceStable(peers, func(i, j int) bool {
+		iSelf := a.Client != nil && peers[i].ID == a.Client.MyID
+		jSelf := a.Client != nil && peers[j].ID == a.Client.MyID
+		if iSelf != jSelf {
+			return iSelf
+		}
+		return peers[i].Name < peers[j].Name
+	})
 
 	if len(peers) == 0 {
 		return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {

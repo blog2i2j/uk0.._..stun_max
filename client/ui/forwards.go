@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"image"
+	"sort"
 	"image/color"
 	"strconv"
 	"strings"
@@ -144,16 +145,30 @@ func (f *ForwardsPanel) Layout(gtx layout.Context, th *material.Theme, a *App) l
 		Saved   SavedForward
 	}
 	var items []displayItem
-	// Active first
 	for _, fwd := range forwards {
 		items = append(items, displayItem{Active: true, Info: fwd})
 	}
-	// Stopped saved forwards
 	for _, sf := range savedFwds {
 		if !activeSet[sf.LocalPort] {
 			items = append(items, displayItem{Active: false, Saved: sf})
 		}
 	}
+
+	// Stable sort by local port (active first, then stopped)
+	sort.SliceStable(items, func(i, j int) bool {
+		pi := items[i].Info.LocalPort
+		if !items[i].Active {
+			pi = items[i].Saved.LocalPort
+		}
+		pj := items[j].Info.LocalPort
+		if !items[j].Active {
+			pj = items[j].Saved.LocalPort
+		}
+		if items[i].Active != items[j].Active {
+			return items[i].Active // active before stopped
+		}
+		return pi < pj
+	})
 
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
