@@ -297,8 +297,18 @@ func (a *App) DoConnect(cfg core.ClientConfig) {
 		if prev := LoadConfig(); prev != nil {
 			saved.Forwards = prev.Forwards
 			saved.Autostart = prev.Autostart
+			saved.AllowForward = prev.AllowForward
+			saved.LocalOnly = prev.LocalOnly
 		}
 		SaveConfig(saved)
+
+		// Apply saved settings to core client
+		if saved.AllowForward != nil {
+			client.SetAllowForward(*saved.AllowForward)
+		}
+		if saved.LocalOnly != nil {
+			client.SetLocalOnly(*saved.LocalOnly)
+		}
 
 		// Load saved forwards
 		a.mu.Lock()

@@ -57,6 +57,12 @@ func (s *SettingsPanel) init(a *App) {
 	s.Autostart.Value = GetAutostart()
 	if cfg := LoadConfig(); cfg != nil {
 		s.AutoConnect.Value = cfg.AutoConnect
+		if cfg.AllowForward != nil {
+			s.AllowForward.Value = *cfg.AllowForward
+		}
+		if cfg.LocalOnly != nil {
+			s.LocalOnly.Value = *cfg.LocalOnly
+		}
 	}
 
 	// Auto login
@@ -122,11 +128,13 @@ func (s *SettingsPanel) Layout(gtx layout.Context, th *material.Theme, a *App) l
 		if a.Client != nil {
 			a.Client.SetAllowForward(s.AllowForward.Value)
 		}
+		saveBoolSetting(func(cfg *SavedConfig) { v := s.AllowForward.Value; cfg.AllowForward = &v })
 	}
 	if s.LocalOnly.Update(gtx) {
 		if a.Client != nil {
 			a.Client.SetLocalOnly(s.LocalOnly.Value)
 		}
+		saveBoolSetting(func(cfg *SavedConfig) { v := s.LocalOnly.Value; cfg.LocalOnly = &v })
 	}
 	if s.Autostart.Update(gtx) {
 		SetAutostart(s.Autostart.Value)
@@ -469,6 +477,15 @@ func (s *SettingsPanel) layoutAddSTUNRow(gtx layout.Context, th *material.Theme)
 			})
 		}),
 	)
+}
+
+func saveBoolSetting(apply func(cfg *SavedConfig)) {
+	cfg := LoadConfig()
+	if cfg == nil {
+		cfg = &SavedConfig{}
+	}
+	apply(cfg)
+	SaveConfig(cfg)
 }
 
 func (s *SettingsPanel) layoutSettingCard(gtx layout.Context, th *material.Theme, title, desc string, toggle *widget.Bool) layout.Dimensions {

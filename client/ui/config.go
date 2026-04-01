@@ -9,15 +9,17 @@ import (
 
 // SavedConfig persists connection and forward settings across restarts.
 type SavedConfig struct {
-	ServerURL   string         `json:"server_url"`
-	Room        string         `json:"room"`
-	Password    string         `json:"password"`
-	Name        string         `json:"name"`
-	STUNServers []string       `json:"stun_servers,omitempty"`
-	NoSTUN      bool           `json:"no_stun,omitempty"`
-	Autostart   bool           `json:"autostart,omitempty"`
-	AutoConnect bool           `json:"auto_connect,omitempty"` // auto-connect on launch
-	Forwards    []SavedForward `json:"forwards,omitempty"`
+	ServerURL    string         `json:"server_url"`
+	Room         string         `json:"room"`
+	Password     string         `json:"password"`
+	Name         string         `json:"name"`
+	STUNServers  []string       `json:"stun_servers,omitempty"`
+	NoSTUN       bool           `json:"no_stun,omitempty"`
+	Autostart    bool           `json:"autostart,omitempty"`
+	AutoConnect  bool           `json:"auto_connect,omitempty"`
+	AllowForward *bool          `json:"allow_forward,omitempty"` // nil = default true
+	LocalOnly    *bool          `json:"local_only,omitempty"`    // nil = default true
+	Forwards     []SavedForward `json:"forwards,omitempty"`
 }
 
 // SavedForward persists a forward rule.
