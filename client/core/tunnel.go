@@ -11,18 +11,10 @@ import (
 	"time"
 )
 
-// Buffer pool for relay mode (large reads, high throughput)
+// Buffer pool for relay mode
 var relayBufPool = sync.Pool{
 	New: func() interface{} {
 		b := make([]byte, 64*1024)
-		return &b
-	},
-}
-
-// directFramePool reuses frame buffers: 12-byte header + 64KB data
-var directFramePool = sync.Pool{
-	New: func() interface{} {
-		b := make([]byte, 12+64*1024)
 		return &b
 	},
 }
@@ -256,14 +248,9 @@ func (c *Client) tunnelReadLoop(tc *TunnelConn, peerID string) {
 }
 
 // tunnelReadDirect: high-performance direct TCP path.
-// Single write per frame (header+data in one buffer), pooled buffers.
+// Single write per frame (header+data in one buffer), with compression.
 func (c *Client) tunnelReadDirect(tc *TunnelConn, peerID string, directConn net.Conn, idBytes []byte) {
-	framePtr := directFramePool.Get().(*[]byte)
-	defer directFramePool.Put(framePtr)
-	frame := *framePtr
-
-	// Pre-fill tunnel ID in frame header (never changes)
-	copy(frame[:8], idBytes)
+	readBuf := make([]byte, 64*1024)
 
 	for {
 		select {
@@ -275,31 +262,35 @@ func (c *Client) tunnelReadDirect(tc *TunnelConn, peerID string, directConn net.
 		}
 
 		tc.Conn.SetReadDeadline(time.Now().Add(10 * time.Minute))
-		// Read directly into frame buffer after the 12-byte header
-		n, err := tc.Conn.Read(frame[12:])
+		n, err := tc.Conn.Read(readBuf)
 		if n > 0 {
 			if tc.Forward != nil {
 				atomic.AddInt64(&tc.Forward.BytesUp, int64(n))
 			}
 
-			// Write length into header
-			frame[8] = byte(n >> 24)
-			frame[9] = byte(n >> 16)
-			frame[10] = byte(n >> 8)
-			frame[11] = byte(n)
+			// Compress
+			compressed := Compress(readBuf[:n])
 
-			// Single write: header + data in one syscall
+			// Build frame: [8-byte tunnelID][4-byte length][compressed data]
+			frameLen := 8 + 4 + len(compressed)
+			frame := make([]byte, frameLen)
+			copy(frame[:8], idBytes)
+			clen := len(compressed)
+			frame[8] = byte(clen >> 24)
+			frame[9] = byte(clen >> 16)
+			frame[10] = byte(clen >> 8)
+			frame[11] = byte(clen)
+			copy(frame[12:], compressed)
+
 			directConn.SetWriteDeadline(time.Now().Add(10 * time.Second))
-			_, werr := directConn.Write(frame[:12+n])
+			_, werr := directConn.Write(frame)
 			if werr != nil {
-				// Direct TCP broken — fall back to relay for remaining data
 				c.peerConnsMu.Lock()
 				if pc, ok := c.peerConns[peerID]; ok {
 					pc.DirectTCP = nil
 				}
 				c.peerConnsMu.Unlock()
 				directConn.Close()
-				// Continue with relay path
 				c.tunnelReadRelay(tc, peerID)
 				return
 			}
@@ -331,7 +322,8 @@ func (c *Client) tunnelReadRelay(tc *TunnelConn, peerID string) {
 			if tc.Forward != nil {
 				atomic.AddInt64(&tc.Forward.BytesUp, int64(n))
 			}
-			encoded := base64.StdEncoding.EncodeToString(buf[:n])
+			compressed := Compress(buf[:n])
+			encoded := base64.StdEncoding.EncodeToString(compressed)
 			c.sendRelay(peerID, "tunnel_data", TunnelData{TunnelID: tc.TunnelID, Data: encoded})
 		}
 		if err != nil {
@@ -367,9 +359,14 @@ func (c *Client) handleTunnelData(msg Message) {
 		return
 	}
 
-	data, err := base64.StdEncoding.DecodeString(td.Data)
+	compressed, err := base64.StdEncoding.DecodeString(td.Data)
 	if err != nil {
 		return
+	}
+
+	data, err := Decompress(compressed)
+	if err != nil {
+		data = compressed // fallback: treat as raw
 	}
 
 	if tc.Forward != nil {

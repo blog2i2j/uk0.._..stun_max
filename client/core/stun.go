@@ -838,7 +838,7 @@ func getLocalIP() string {
 }
 
 // directTCPReadLoop reads framed tunnel data from a direct TCP connection.
-// Frame format: [8-byte tunnelID][4-byte length][data]
+// Frame format: [8-byte tunnelID][4-byte length][compressed data]
 func (c *Client) directTCPReadLoop(conn net.Conn) {
 	defer c.wg.Done()
 	defer conn.Close()
@@ -853,7 +853,6 @@ func (c *Client) directTCPReadLoop(conn net.Conn) {
 
 		conn.SetReadDeadline(time.Now().Add(10 * time.Minute))
 
-		// Read header: 8-byte tunnelID + 4-byte length
 		if _, err := io.ReadFull(conn, header); err != nil {
 			return
 		}
@@ -861,16 +860,20 @@ func (c *Client) directTCPReadLoop(conn net.Conn) {
 		tunnelID := tunnelIDFromBytes(header[:8])
 		dataLen := int(header[8])<<24 | int(header[9])<<16 | int(header[10])<<8 | int(header[11])
 		if dataLen <= 0 || dataLen > 256*1024 {
-			return // invalid frame
-		}
-
-		// Read data
-		data := make([]byte, dataLen)
-		if _, err := io.ReadFull(conn, data); err != nil {
 			return
 		}
 
-		// Write to tunnel
+		compressed := make([]byte, dataLen)
+		if _, err := io.ReadFull(conn, compressed); err != nil {
+			return
+		}
+
+		// Decompress
+		data, err := Decompress(compressed)
+		if err != nil {
+			data = compressed // fallback: treat as raw
+		}
+
 		c.tunnelsMu.RLock()
 		tc, ok := c.tunnels[tunnelID]
 		c.tunnelsMu.RUnlock()
@@ -879,7 +882,7 @@ func (c *Client) directTCPReadLoop(conn net.Conn) {
 		}
 
 		if tc.Forward != nil {
-			atomic.AddInt64(&tc.Forward.BytesDown, int64(dataLen))
+			atomic.AddInt64(&tc.Forward.BytesDown, int64(len(data)))
 		}
 		tc.Conn.SetWriteDeadline(time.Now().Add(30 * time.Second))
 		tc.Conn.Write(data)
