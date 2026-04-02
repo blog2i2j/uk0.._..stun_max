@@ -4,16 +4,21 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"sync"
 	"sync/atomic"
-
-	"github.com/songgao/water"
 )
+
+// tunIface abstracts the TUN device across platforms.
+type tunIface interface {
+	io.ReadWriteCloser
+	Name() string
+}
 
 // TunDevice holds the state of an active VPN tunnel.
 type TunDevice struct {
-	iface     *water.Interface
+	iface     tunIface
 	ifName    string
 	virtualIP net.IP
 	peerIP    net.IP
@@ -135,11 +140,7 @@ func (c *Client) StopTun() error {
 }
 
 func (c *Client) createTunDevice(localIP, peerIP, subnet, peerID string) (*TunDevice, error) {
-	cfg := water.Config{
-		DeviceType: water.TUN,
-	}
-
-	iface, err := water.New(cfg)
+	iface, err := createPlatformTun()
 	if err != nil {
 		return nil, fmt.Errorf("TUN device creation failed (need root/admin): %w", err)
 	}

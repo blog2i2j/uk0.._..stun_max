@@ -2,7 +2,23 @@
 
 package core
 
-import "os/exec"
+import (
+	"os/exec"
+
+	"github.com/songgao/water"
+)
+
+type waterIface struct {
+	*water.Interface
+}
+
+func createPlatformTun() (tunIface, error) {
+	iface, err := water.New(water.Config{DeviceType: water.TUN})
+	if err != nil {
+		return nil, err
+	}
+	return &waterIface{iface}, nil
+}
 
 func configureTunInterface(ifName, localIP, peerIP string) error {
 	if err := exec.Command("ifconfig", ifName, localIP, peerIP, "up").Run(); err != nil {

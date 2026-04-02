@@ -2,7 +2,24 @@
 
 package core
 
-import "os/exec"
+import (
+	"os/exec"
+
+	"github.com/songgao/water"
+)
+
+// waterIface wraps water.Interface to implement tunIface.
+type waterIface struct {
+	*water.Interface
+}
+
+func createPlatformTun() (tunIface, error) {
+	iface, err := water.New(water.Config{DeviceType: water.TUN})
+	if err != nil {
+		return nil, err
+	}
+	return &waterIface{iface}, nil
+}
 
 func configureTunInterface(ifName, localIP, peerIP string) error {
 	if err := exec.Command("ip", "addr", "add", localIP+"/24", "dev", ifName).Run(); err != nil {
@@ -33,7 +50,6 @@ func enableIPForwarding() {
 }
 
 func enableNAT(ifName string) {
-	// Masquerade traffic from TUN to physical interface
 	exec.Command("iptables", "-t", "nat", "-A", "POSTROUTING", "!", "-o", ifName, "-j", "MASQUERADE").Run()
 	exec.Command("iptables", "-A", "FORWARD", "-i", ifName, "-j", "ACCEPT").Run()
 	exec.Command("iptables", "-A", "FORWARD", "-o", ifName, "-m", "state", "--state", "RELATED,ESTABLISHED", "-j", "ACCEPT").Run()
