@@ -366,6 +366,9 @@ func (c *Client) tunCleanup() {
 		return
 	}
 
+	// Notify peer before cleanup
+	c.sendRelay(dev.peerID, "tun_teardown", TunTeardown{})
+
 	dev.closeOnce.Do(func() {
 		close(dev.done)
 	})
