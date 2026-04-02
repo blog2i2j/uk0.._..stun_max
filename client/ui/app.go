@@ -60,11 +60,12 @@ func NewApp() *App {
 		Theme:  NewTheme(),
 		Screen: ScreenConnect,
 	}
+	// Always load config into connect form first
+	a.Connect.init()
+
 	// Try auto-connect if config exists and auto_connect is enabled
 	if cfg := LoadConfig(); cfg != nil && cfg.AutoConnect && cfg.ServerURL != "" && cfg.Room != "" {
-		a.Connect.inited = true // skip init, we'll fill from config
 		go func() {
-			// Small delay to let window initialize
 			time.Sleep(300 * time.Millisecond)
 			a.mu.Lock()
 			a.Connect.Connecting = true
