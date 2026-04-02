@@ -15,21 +15,31 @@ type wgTunIface struct {
 }
 
 func (w *wgTunIface) Read(b []byte) (int, error) {
-	bufs := [][]byte{b}
+	// macOS utun needs 4 bytes offset for AF header
+	bufs := [][]byte{make([]byte, len(b)+4)}
 	sizes := make([]int, 1)
-	n, err := w.dev.Read(bufs, sizes, 0)
+	n, err := w.dev.Read(bufs, sizes, 4)
 	if err != nil {
 		return 0, err
 	}
-	if n == 0 {
+	if n == 0 || sizes[0] == 0 {
 		return 0, fmt.Errorf("no packets read")
 	}
+	copy(b, bufs[0][4:4+sizes[0]])
 	return sizes[0], nil
 }
 
 func (w *wgTunIface) Write(b []byte) (int, error) {
-	bufs := [][]byte{b}
-	n, err := w.dev.Write(bufs, 0)
+	// macOS utun needs 4 bytes AF header prepended
+	buf := make([]byte, 4+len(b))
+	if len(b) > 0 && (b[0]>>4) == 6 {
+		buf[3] = 30 // AF_INET6
+	} else {
+		buf[3] = 2 // AF_INET
+	}
+	copy(buf[4:], b)
+	bufs := [][]byte{buf}
+	n, err := w.dev.Write(bufs, 4)
 	if err != nil {
 		return 0, err
 	}
