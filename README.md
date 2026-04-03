@@ -13,28 +13,32 @@
 
 ## Features
 
-- **P2P Direct Connection** — STUN hole punch → Direct TCP upgrade, data never touches the server
+- **P2P Direct Connection** — STUN hole punch with Birthday Attack + port prediction, data never touches the server
 - **Auto Relay Fallback** — If P2P fails after 5 attempts, seamlessly falls back to server relay
+- **gVisor TCP/IP Stack** — Production-grade userspace TCP (same as Tailscale/tun2socks) for VPN proxy and port forwarding
+- **TUN VPN** — Full subnet routing with SNAT, TCP MSS clamping, smart compression bypass
+- **Port Forwarding** — Map any remote peer's `host:port` to your localhost, with gVisor reliable transport
+- **Speed Test** — P2P bandwidth test between peers with real-time progress
+- **File Transfer** — Send files between peers with compression and progress tracking
 - **LAN Auto-Detection** — Same public IP peers connect via local address (zero latency)
-- **Port Forwarding** — Map any remote peer's `host:port` to your localhost
 - **Auto Reconnect** — Network changes trigger automatic reconnect (3s interval, infinite retry)
 - **Room-Based Access** — Password-protected rooms, created via admin dashboard only
 - **GUI + CLI** — Gio UI desktop app (Windows/Mac) + readline CLI with tab completion
 - **NAT Diagnostic** — Built-in `natcheck` tool detects NAT type and punch success probability
-- **Windows Tools** — One-click RDP enable (localhost-only firewall), auto-login, admin autostart
 - **Config Persistence** — Connection, forwards, STUN servers saved and restored across restarts
-- **Blacklist** — Ban clients per room from the admin dashboard
 - **Traffic Stats** — Real-time upload/download speed and total bytes per forward
-- **Self-Hosted STUN** — Lightweight STUN server included for China/restricted networks
+- **Self-Hosted STUN** — Lightweight STUN server included for restricted networks
+
+<!-- PLACEHOLDER_README_PART2 -->
 
 ## Architecture
 
 ```
 ┌──────────┐    1. UDP hole punch       ┌──────────┐
-│ Client A │◄ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─  ►│ Client B │
-│ (GUI/CLI)│    2. Direct TCP upgrade   │ (GUI/CLI)│
+│ Client A │◄ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ►│ Client B │
+│ (GUI/CLI)│    2. P2P UDP direct       │ (GUI/CLI)│
 │          │◄══════════════════════════►│          │
-└────┬─────┘    (reliable, fast)        └────┬─────┘
+└────┬─────┘    (gVisor TCP/IP stack)   └────┬─────┘
      │                                       │
      │   WebSocket (signaling + relay)       │
      └───────────────┬───────────────────────┘
@@ -51,16 +55,32 @@
 1. Both clients connect to signal server via WebSocket
 2. STUN discovery finds public IP:port (supports custom/self-hosted STUN)
 3. UDP hole punch with Birthday Attack + port prediction
-4. Direct TCP upgrade over the punched hole (reliable, ordered)
-5. Tunnel data flows P2P — server not in the data path
+4. Data flows over P2P UDP — server not in the data path
+5. gVisor userspace TCP/IP stack handles congestion control, retransmission, SACK
 6. If punch fails 5 times → auto relay, background retry continues
 7. If P2P later succeeds → auto upgrade back from relay
 
 ## Screenshots
 
-| Dashboard | GUI Client |
-|-----------|------------|
-| ![Dashboard](img/img_2.png) | ![Client](img/img_1.png) |
+| Dashboard | GUI - Connect |
+|-----------|---------------|
+| ![Dashboard](img/img_2.png) | ![Connect](img/img_1.png) |
+
+| GUI - Overview | GUI - Peers |
+|----------------|-------------|
+| ![Overview](img/img_3.png) | ![Peers](img/img_4.png) |
+
+| GUI - Forwards | GUI - TUN VPN |
+|----------------|---------------|
+| ![Forwards](img/img_5.png) | ![VPN](img/img_6.png) |
+
+| GUI - Settings | GUI - Files |
+|----------------|-------------|
+| ![Settings](img/img_7.png) | ![Files](img/img_8.png) |
+
+| GUI - Logs |
+|------------|
+| ![Logs](img/img_9.png) |
 
 ## Quick Start
 
@@ -96,7 +116,7 @@ LimitNOFILE=65536
 WantedBy=multi-user.target
 EOF
 
-# STUN Server (optional, recommended for China)
+# STUN Server (optional, recommended for restricted networks)
 cat > /etc/systemd/system/stun-max-stun.service << 'EOF'
 [Unit]
 Description=STUN Max STUN Server
@@ -127,8 +147,6 @@ journalctl -u stun-max | grep Password
 
 Open `http://SERVER:8080`, login, create a room with name + password.
 
-Rooms persist until explicitly deleted — they survive client disconnects and server restarts.
-
 ### 3. Connect
 
 **GUI (Windows/Mac):**
@@ -141,7 +159,7 @@ Run `stun_max-client-windows-amd64.exe` or `stun_max-client-darwin-arm64`, fill 
 ./stun_max-cli --server ws://SERVER:8080/ws --room myroom --password secret --name laptop
 ```
 
-### 4. Forward Ports
+### 4. Port Forwarding
 
 ```bash
 # Forward peer's port to local
@@ -151,6 +169,35 @@ Run `stun_max-client-windows-amd64.exe` or `stun_max-client-darwin-arm64`, fill 
 # Manage
 > forwards          # list with traffic stats
 > unforward 3389    # stop
+```
+
+### 5. TUN VPN (Subnet Routing)
+
+```bash
+# Route a remote subnet through peer
+> vpn peer-name 192.168.1.0/24
+> vpn peer-name 192.168.1.0/24 --exit-ip 192.168.1.1
+
+# Check status
+> vpn status
+
+# Stop
+> vpn stop
+```
+
+### 6. Speed Test
+
+```bash
+> speedtest peer-name          # default 10MB, auto mode
+> speedtest peer-name 50       # 50MB test
+> speedtest peer-name 10 p2p   # force P2P transport
+```
+
+### 7. File Transfer
+
+```bash
+> send peer-name /path/to/file
+> transfers                     # list active transfers
 ```
 
 ## Build
@@ -172,8 +219,15 @@ go build ./tools/stunserver/                  # STUN server
 | `forward <peer> <host:port> [local]` | Forward remote port |
 | `unforward <port>` | Stop forward |
 | `forwards` | List forwards with traffic stats |
+| `expose <host:port> <peer> [port]` | Reverse forward (expose local service) |
 | `stun` | STUN/P2P connection details |
-| `speedtest <peer>` | Bandwidth test |
+| `speedtest <peer> [size] [p2p\|relay]` | Bandwidth test |
+| `send <peer> <file>` | Send file to peer |
+| `transfers` | List file transfers |
+| `vpn <peer> [subnets...] [--exit-ip IP]` | Start TUN VPN |
+| `vpn status` | VPN status with traffic |
+| `vpn stop` | Stop VPN |
+| `hop <peer-b> <peer-c> <host:port>` | Multi-hop forward via B to C |
 | `help` | All commands |
 | `quit` | Disconnect |
 
@@ -183,26 +237,26 @@ Tab completion for commands, peer names, and ports.
 
 | Tab | Description |
 |-----|-------------|
-| **Peers** | Peer list with P2P/RELAY badges, STUN endpoints, self mode display |
-| **Forwards** | Create/stop/delete forwards, live traffic (bytes + speed), relay fallback |
-| **Speed Test** | Upload/download bandwidth test between peers |
-| **Tools** | Windows RDP enable (localhost-only), password management |
-| **Settings** | Forward control, STUN server selector, autostart, auto-connect, auto-login |
-| **Logs** | Scrollable event log |
+| **Peers** | Peer list with P2P/RELAY badges, STUN endpoints |
+| **Forwards** | Create/stop forwards, live traffic (bytes + speed), peer dropdown selector |
+| **VPN** | Start/stop TUN VPN, subnet routing, traffic stats |
+| **Speed Test** | P2P bandwidth test with progress bar and transport display |
+| **Files** | Send/receive files with progress |
+| **Settings** | Forward control, STUN server selector, autostart, auto-connect |
+| **Logs** | Scrollable event log with severity colors |
 
 ## Security
 
 | Feature | Detail |
 |---------|--------|
+| E2E encryption | X25519 + AES-256-GCM for all P2P and relay data |
 | Room isolation | Relay verifies sender and receiver in same room |
 | Room auth | Dashboard-only creation, SHA-256 password hash |
-| Rate limiting | Login 5/min, WebSocket 20/min, Join 10/min per IP/client |
+| Rate limiting | Login 5/min, WebSocket 20/min, Join 10/min per IP |
 | Connection limit | Global max (default 5000, `--max-connections`) |
 | Session expiry | Dashboard tokens expire after 24 hours |
 | Blacklist | Ban/unban clients per room |
 | Forward control | Per-client allow/deny + local-only mode |
-| RDP firewall | Port 3389 restricted to 127.0.0.1 only |
-| IP validation | X-Forwarded-For not trusted |
 
 ## Server Flags
 
@@ -212,6 +266,8 @@ Tab completion for commands, peer names, and ports.
 | `--web-password` | (random) | Dashboard password |
 | `--web-dir` | `../web` | Static files path |
 | `--max-connections` | `5000` | Max WebSocket connections |
+| `--tls-cert` | | TLS certificate file |
+| `--tls-key` | | TLS key file |
 
 ## Client Flags (CLI)
 
@@ -228,37 +284,44 @@ Tab completion for commands, peer names, and ports.
 ## Project Structure
 
 ```
-server/              Signal + relay + dashboard
-  main.go            HTTP/WS, auth, rate limiting, connection limits
-  hub.go             Rooms, peers, blacklist
-  client.go          Message routing, join validation
-  relay.go           Data relay with room isolation
-  stats.go           Traffic statistics
+server/                  Signal + relay + dashboard
+  main.go                HTTP/WS, auth, rate limiting, TLS
+  hub.go                 Rooms, peers, blacklist
+  client.go              Message routing, join validation
 
-client/core/         Networking (shared by GUI + CLI)
-  client.go          Connection, reconnect, signaling
-  tunnel.go          Port forwarding, Direct TCP + relay
-  stun.go            STUN discovery, hole punch, TCP upgrade
-  crypto.go          X25519 + AES-256-GCM key exchange
-  speedtest.go       Bandwidth testing
-  types.go           Protocol types
-  events.go          Event system
+client/core/             Networking (shared by GUI + CLI)
+  client.go              Connection, reconnect, signaling
+  tunnel.go              Port forwarding with gVisor transport
+  forward_netstack.go    Per-peer gVisor TCP/IP stack for forwards
+  tun.go                 TUN VPN device, SNAT, MSS clamping
+  tun_netstack.go        gVisor TCP/IP stack for VPN subnet proxy
+  tun_proxy.go           Legacy ICMP proxy (raw socket)
+  tun_config_*.go        Platform-specific TUN setup (darwin/linux/windows)
+  stun.go                STUN discovery, hole punch, UDP read loop
+  speedtest.go           P2P bandwidth testing
+  crypto.go              X25519 + AES-256-GCM key exchange
+  compress.go            Deflate compression with smart bypass
+  udp_reliable.go        RUTP reliable UDP (legacy, used by old tunnels)
+  types.go               Protocol types
+  events.go              Event system
 
-client/ui/           Gio UI desktop app
-  app.go             Window, events, auto-connect
-  connect.go         Login screen
-  dashboard.go       Tab navigation
-  peers.go           Peer list
-  forwards.go        Forward management
-  speedtest.go       Speed test
-  tools.go           Windows RDP
-  settings.go        All settings + STUN selector
-  config.go          Config persistence
-  autostart_*.go     Windows Task Scheduler / registry
+client/ui/               Gio UI desktop app
+  app.go                 Window, events, auto-connect
+  connect.go             Login screen
+  dashboard.go           Tab navigation
+  peers.go               Peer list
+  forwards.go            Forward management with traffic stats
+  vpn.go                 TUN VPN control
+  speedtest.go           Speed test with P2P mode
+  files.go               File transfer
+  peer_selector.go       Dropdown peer selector with P2P/RELAY badge
+  settings.go            Settings + STUN selector
+  config.go              Config persistence
+  logs.go                Event log viewer
 
-web/                 Admin dashboard (HTML/JS/CSS)
-tools/natcheck/      NAT type diagnostic
-tools/stunserver/    Self-hosted STUN server
+web/                     Admin dashboard (HTML/JS/CSS)
+tools/natcheck/          NAT type diagnostic
+tools/stunserver/        Self-hosted STUN server
 ```
 
 ## License
