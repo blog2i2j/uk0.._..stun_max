@@ -66,9 +66,9 @@
 |-----------|---------------|
 | ![Dashboard](img/img_2.png) | ![Connect](img/img_1.png) |
 
-| GUI - Overview | GUI - Peers |
-|----------------|-------------|
-| ![Overview](img/img_3.png) | ![Peers](img/img_4.png) |
+| GUI - Logs             | GUI - Peers |
+|------------------------|-------------|
+| ![Logs](img/img_9.png) | ![Peers](img/img_4.png) |
 
 | GUI - Forwards | GUI - TUN VPN |
 |----------------|---------------|
@@ -78,9 +78,6 @@
 |----------------|-------------|
 | ![Settings](img/img_7.png) | ![Files](img/img_8.png) |
 
-| GUI - Logs |
-|------------|
-| ![Logs](img/img_9.png) |
 
 ## Quick Start
 
