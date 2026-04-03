@@ -323,4 +323,4 @@ tools/stunserver/        Self-hosted STUN server
 
 ## License
 
-MIT
+AGPL-3.0 — See [LICENSE](LICENSE) for details.
