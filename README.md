@@ -3,7 +3,7 @@
 </p>
 
 
-> 微信公众号：STUN Max<br>
+> 微信公众号：你起来我讲两句<br>
 
 <p align="center">
   <img src="img/weixin.png" width="256" alt="WeChat QR Code">
