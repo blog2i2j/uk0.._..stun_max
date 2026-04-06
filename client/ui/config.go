@@ -21,6 +21,7 @@ type SavedConfig struct {
 	LocalOnly       *bool          `json:"local_only,omitempty"`
 	AllowVPN        *bool          `json:"allow_vpn,omitempty"`
 	AllowFileRecv   *bool          `json:"allow_file_recv,omitempty"`
+	AllowHopRelay   *bool          `json:"allow_hop_relay,omitempty"`
 	VirtualIP    string         `json:"virtual_ip,omitempty"`
 	Forwards     []SavedForward `json:"forwards,omitempty"`
 

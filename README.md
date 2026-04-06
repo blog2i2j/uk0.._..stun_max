@@ -30,7 +30,8 @@
 - **LAN Auto-Detection** — Same public IP peers connect via local address (zero latency)
 - **Auto Reconnect** — Network changes trigger automatic reconnect (3s interval, infinite retry)
 - **Room-Based Access** — Password-protected rooms, created via admin dashboard only
-- **GUI + CLI** — Gio UI desktop app (Windows/Mac) + readline CLI with tab completion
+- **GUI + CLI** — Gio UI desktop app (Windows/Mac/Android) + readline CLI with tab completion
+- **Android App** — Full-featured Android client with VPN support, auto permission request, and native app icon
 - **NAT Diagnostic** — Built-in `natcheck` tool detects NAT type and punch success probability
 - **Config Persistence** — Connection, forwards, STUN servers saved and restored across restarts
 - **Traffic Stats** — Real-time upload/download speed and total bytes per forward
@@ -85,6 +86,15 @@
 |----------------|-------------|
 | ![Settings](img/img_7.png) | ![Files](img/img_8.png) |
 
+### Android
+
+| Peers | Forwards | Files | VPN |
+|-------|----------|-------|-----|
+| ![Peers](screenshots/01_peers.png) | ![Forwards](screenshots/02_forwards.png) | ![Files](screenshots/03_files.png) | ![VPN](screenshots/04_vpn.png) |
+
+| Speed Test | Tools | Settings | Logs |
+|------------|-------|----------|------|
+| ![SpeedTest](screenshots/05_speedtest.png) | ![Tools](screenshots/06_tools.png) | ![Settings](screenshots/07_settings.png) | ![Logs](screenshots/08_logs.png) |
 
 ## Quick Start
 
@@ -153,9 +163,11 @@ Open `http://SERVER:8080`, login, create a room with name + password.
 
 ### 3. Connect
 
-**GUI (Windows/Mac):**
+**GUI (Windows/Mac/Android):**
 
 Run `stun_max-client-windows-amd64.exe` or `stun_max-client-darwin-arm64`, fill in server URL, room, password, name → Connect.
+
+**Android:** Install `stun_max-android-v*.apk`, same UI as desktop with touch-optimized layout.
 
 **CLI:**
 
@@ -207,13 +219,16 @@ Run `stun_max-client-windows-amd64.exe` or `stun_max-client-darwin-arm64`, fill 
 ## Build
 
 ```bash
-./build.sh                                    # all platforms
+./build.sh                                    # all platforms (server + desktop + CLI)
+bash android/build-apk.sh v1.0.0             # Android APK
 go build ./server/                            # server only
 go build ./client/                            # GUI client
 go build -tags cli ./client/                  # CLI client
 go build ./tools/natcheck/                    # NAT diagnostic
 go build ./tools/stunserver/                  # STUN server
 ```
+
+**Android build requires:** Android SDK (`ANDROID_HOME`), NDK, `gogio` (`go install gioui.org/cmd/gogio@latest`).
 
 ## CLI Commands
 
@@ -247,7 +262,10 @@ Tab completion for commands, peer names, and ports.
 | **Speed Test** | P2P bandwidth test with progress bar and transport display |
 | **Files** | Send/receive files with progress |
 | **Settings** | Forward control, STUN server selector, autostart, auto-connect |
+| **Tools** | Windows RDP remote desktop setup |
 | **Logs** | Scrollable event log with severity colors |
+
+All tabs support vertical scrolling on both desktop and mobile.
 
 ## Security
 
@@ -309,7 +327,7 @@ client/core/             Networking (shared by GUI + CLI)
   types.go               Protocol types
   events.go              Event system
 
-client/ui/               Gio UI desktop app
+client/ui/               Gio UI cross-platform app
   app.go                 Window, events, auto-connect
   connect.go             Login screen
   dashboard.go           Tab navigation
@@ -318,10 +336,25 @@ client/ui/               Gio UI desktop app
   vpn.go                 TUN VPN control
   speedtest.go           Speed test with P2P mode
   files.go               File transfer
+  tools.go               Windows RDP tools
   peer_selector.go       Dropdown peer selector with P2P/RELAY badge
   settings.go            Settings + STUN selector
   config.go              Config persistence
   logs.go                Event log viewer
+  logo.go                Embedded app logo
+  platform_android.go    Android platform detection
+  platform_other.go      Desktop platform detection
+
+client/core/
+  vpn_android.go         Android VPN via JNI (VpnService bridge)
+  vpn_stub.go            No-op VPN stub for non-Android
+  tun_config_android.go  Android TUN device via VpnService fd
+  autohop.go             Auto-hop P2P relay discovery
+
+android/                 Android build pipeline
+  build-apk.sh           gogio + dex injection + manifest + signing
+  AndroidManifest.xml    VpnService + permissions declaration
+  app/src/main/java/     VpnPermissionActivity, StunMaxVpnService, GoBridge
 
 web/                     Admin dashboard (HTML/JS/CSS)
 tools/natcheck/          NAT type diagnostic

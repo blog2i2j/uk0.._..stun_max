@@ -125,6 +125,10 @@ func (c *Client) StartTun(peerID string, routes []string, exitIP string) error {
 
 	c.tunMu.Lock()
 	if existingDev, exists := c.tunDevices[fullID]; exists {
+		if existingDev.role == "responder" {
+			c.tunMu.Unlock()
+			return fmt.Errorf("peer already has an active incoming VPN session (role: IN). Stop it first or let the peer reinitiate")
+		}
 		c.tunMu.Unlock()
 		// Same peer — add new routes to existing VPN
 		return c.addRoutesToExistingTun(existingDev, fullID, routes)
@@ -156,15 +160,18 @@ func (c *Client) StartTun(peerID string, routes []string, exitIP string) error {
 		return fmt.Errorf("send tun_setup: %w", err)
 	}
 
-	// Wait for B's tun_ack with its virtual IP (timeout 10s)
+	// Wait for B's tun_ack with its virtual IP (timeout 60s)
 	var peerIP string
 	select {
 	case peerIP = <-ackCh:
-	case <-time.After(10 * time.Second):
+	case <-time.After(60 * time.Second):
 		return fmt.Errorf("VPN setup timeout: peer did not respond")
 	case <-c.done:
 		return fmt.Errorf("client disconnected")
 	}
+
+	// On Android, pre-configure VPN params for the JNI bridge (no-op on other platforms)
+	setPendingVPNConfigIfNeeded(myIP, peerIP, routes, 1400)
 
 	// Create local TUN device
 	dev, err := c.createTunDevice(myIP, peerIP, subnet, fullID)
@@ -333,6 +340,9 @@ func (c *Client) stopTunDevice(dev *TunDevice) {
 	removeTunInterface(dev.ifName)
 	removeServerRoute(dev.serverHost)
 
+	// On Android, stop the VpnService and reset pending config
+	stopPlatformVPN()
+
 	c.emit(EventTunStopped, LogEvent{Level: "info", Message: "VPN stopped"})
 	c.ReportFeatures()
 }
@@ -379,7 +389,13 @@ func (c *Client) handleTunSetup(msg Message) {
 
 	c.tunMu.Lock()
 	if old, exists := c.tunDevices[msg.From]; exists {
-		// Same peer reconnecting — tear down old session
+		if old.role == "initiator" {
+			// We already have an outgoing VPN to this peer — don't accept incoming
+			c.tunMu.Unlock()
+			c.emit(EventLog, LogEvent{Level: "warn", Message: fmt.Sprintf("Rejected incoming VPN from %s: already have outgoing VPN (role: OUT)", shortID(msg.From))})
+			return
+		}
+		// Same peer reconnecting as responder — tear down old session
 		delete(c.tunDevices, msg.From)
 		c.tunMu.Unlock()
 		c.emit(EventLog, LogEvent{Level: "info", Message: "Replacing stale VPN session"})
@@ -397,6 +413,7 @@ func (c *Client) handleTunSetup(msg Message) {
 		disableNAT(old.ifName)
 		removeTunInterface(old.ifName)
 		removeServerRoute(old.serverHost)
+		stopPlatformVPN() // Stop Android VpnService before creating new one
 	} else {
 		c.tunMu.Unlock()
 	}
@@ -416,6 +433,9 @@ func (c *Client) handleTunSetup(msg Message) {
 			myIP = fmt.Sprintf("10.7.0.%d", next)
 		}
 	}
+
+	// On Android, pre-configure VPN params for the JNI bridge (no-op on other platforms)
+	setPendingVPNConfigIfNeeded(myIP, peerIP, setup.Routes, 1400)
 
 	dev, err := c.createTunDevice(myIP, peerIP, setup.Subnet, msg.From)
 	if err != nil {

@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"log"
 	"sync"
 	"time"
 
@@ -92,24 +93,43 @@ func NewApp() *App {
 
 // Run is the main event loop.
 func (a *App) Run() error {
+	log.Println("[STUNMAX] Run() started")
 	a.Window.Option(
 		app.Title("STUN Max"),
 		app.Size(unit.Dp(900), unit.Dp(650)),
-		app.MinSize(unit.Dp(700), unit.Dp(500)),
 	)
 
+	// Workaround: some Android devices (Huawei Kirin) have EGL surface timing issues.
+	// Force a few extra redraws at startup to ensure the first valid frame renders.
+	go func() {
+		for i := 0; i < 5; i++ {
+			time.Sleep(100 * time.Millisecond)
+			a.Window.Invalidate()
+		}
+	}()
+
 	var ops op.Ops
+	frameCount := 0
 	for {
-		switch e := a.Window.Event().(type) {
+		e := a.Window.Event()
+		switch e := e.(type) {
 		case app.DestroyEvent:
 			if a.Client != nil {
 				a.Client.Disconnect()
 			}
 			return e.Err
 		case app.FrameEvent:
+			frameCount++
+			if frameCount <= 5 {
+				log.Printf("[STUNMAX] FrameEvent #%d size=%dx%d", frameCount, e.Size.X, e.Size.Y)
+			}
 			gtx := app.NewContext(&ops, e)
 			a.layout(gtx)
 			e.Frame(gtx.Ops)
+			// Force continued rendering for the first few frames
+			if frameCount <= 3 {
+				a.Window.Invalidate()
+			}
 		}
 	}
 }
@@ -203,6 +223,14 @@ func (a *App) handleEvent(evt core.Event) {
 	case core.EventTunError:
 		if le, ok := evt.Data.(core.LogEvent); ok {
 			a.addLog("error", le.Message)
+		}
+	case core.EventAutoHopEstablished:
+		if le, ok := evt.Data.(core.LogEvent); ok {
+			a.addLog("info", le.Message)
+		}
+	case core.EventAutoHopFailed:
+		if le, ok := evt.Data.(core.LogEvent); ok {
+			a.addLog("warn", le.Message)
 		}
 	case core.EventDisconnected:
 		if le, ok := evt.Data.(core.LogEvent); ok {

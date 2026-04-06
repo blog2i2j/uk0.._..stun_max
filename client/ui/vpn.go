@@ -167,18 +167,23 @@ func (v *VPNPanel) layoutControlCard(gtx layout.Context, th *material.Theme, a *
 						lbl.Color = TextColor
 						return lbl.Layout(gtx)
 					}),
+					// Row 1: Peer selector (full width)
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 						return layout.Inset{Top: unit.Dp(12)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+							return v.PeerSel.Layout(gtx, th, a)
+						})
+					}),
+					// Row 2: Subnets input (full width)
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return layout.Inset{Top: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+							return layoutInputField(gtx, th, &v.RoutesEditor, "Subnets (e.g. 10.88.51.0/24)")
+						})
+					}),
+					// Row 3: Exit IP + Start VPN + Stop All
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return layout.Inset{Top: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 							return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-								layout.Flexed(0.22, func(gtx layout.Context) layout.Dimensions {
-									return v.PeerSel.Layout(gtx, th, a)
-								}),
-								layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
-								layout.Flexed(0.30, func(gtx layout.Context) layout.Dimensions {
-									return layoutInputField(gtx, th, &v.RoutesEditor, "Subnets (e.g. 10.88.51.0/24)")
-								}),
-								layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
-								layout.Flexed(0.20, func(gtx layout.Context) layout.Dimensions {
+								layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 									return layoutInputField(gtx, th, &v.ExitIPEditor, "Exit IP (auto)")
 								}),
 								layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
@@ -300,28 +305,35 @@ func (v *VPNPanel) layoutVPNList(gtx layout.Context, th *material.Theme, vpnList
 										}),
 									)
 								}),
-								// Stats row
+								// Stats row 1: Local IP, Peer IP, Routes
 								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 									return layout.Inset{Top: unit.Dp(6)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 										return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
-											layout.Flexed(0.20, func(gtx layout.Context) layout.Dimensions {
+											layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 												return vpnStatItem(gtx, th, "Local IP", vpn.VirtualIP)
 											}),
-											layout.Flexed(0.20, func(gtx layout.Context) layout.Dimensions {
+											layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 												return vpnStatItem(gtx, th, "Peer IP", vpn.PeerIP)
 											}),
-											layout.Flexed(0.20, func(gtx layout.Context) layout.Dimensions {
+											layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 												routeStr := "-"
 												if len(vpn.Routes) > 0 {
 													routeStr = strings.Join(vpn.Routes, ", ")
 												}
 												return vpnStatItem(gtx, th, "Routes", routeStr)
 											}),
-											layout.Flexed(0.20, func(gtx layout.Context) layout.Dimensions {
+										)
+									})
+								}),
+								// Stats row 2: Traffic, Speed
+								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+									return layout.Inset{Top: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+										return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
+											layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 												traffic := fmt.Sprintf("↑%s ↓%s", fmtSize(vpn.BytesUp), fmtSize(vpn.BytesDown))
 												return vpnStatItem(gtx, th, "Traffic", traffic)
 											}),
-											layout.Flexed(0.20, func(gtx layout.Context) layout.Dimensions {
+											layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 												speed := fmt.Sprintf("↑%s/s ↓%s/s", fmtSize(int64(vpn.RateUp)), fmtSize(int64(vpn.RateDown)))
 												return vpnStatItem(gtx, th, "Speed", speed)
 											}),
@@ -385,3 +397,4 @@ func (v *VPNPanel) layoutInfoCard(gtx layout.Context, th *material.Theme) layout
 		)
 	})
 }
+

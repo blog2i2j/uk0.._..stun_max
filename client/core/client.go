@@ -78,6 +78,13 @@ type Client struct {
 	fwdNetstacks   map[string]*forwardNetstack // peerID → netstack
 	fwdNetstacksMu sync.RWMutex
 
+	// P2P connectivity maps from peers (peerID -> set of their direct peers)
+	p2pMaps   map[string]map[string]bool
+	p2pMapsMu sync.RWMutex
+
+	// Auto-hop relay permission
+	allowHopRelay bool // default true — allow peers to route through our P2P connections
+
 	// Peer leave debounce: delay "peer left" to handle brief disconnects
 	pendingLeaves   map[string]*time.Timer // name → cancel timer
 	pendingLeavesMu sync.Mutex
@@ -116,8 +123,10 @@ func NewClient(cfg ClientConfig) *Client {
 		fwdNetstacks:  make(map[string]*forwardNetstack),
 		tunDevices:    make(map[string]*TunDevice),
 		tunAckChs:     make(map[string]chan string),
+		p2pMaps:       make(map[string]map[string]bool),
 		allowForward:  true,
 		localOnly:     true,
+		allowHopRelay: true,
 		allowVPN:      true,
 		allowFileRecv: true,
 		done:         make(chan struct{}),
@@ -501,6 +510,20 @@ func (c *Client) AllowFileRecv() bool {
 	return c.allowFileRecv
 }
 
+// SetAllowHopRelay controls whether this peer allows auto-hop relay through its P2P connections.
+func (c *Client) SetAllowHopRelay(allow bool) {
+	c.acMu.Lock()
+	c.allowHopRelay = allow
+	c.acMu.Unlock()
+}
+
+// AllowHopRelay returns the current hop relay permission.
+func (c *Client) AllowHopRelay() bool {
+	c.acMu.RLock()
+	defer c.acMu.RUnlock()
+	return c.allowHopRelay
+}
+
 // udpSend sends data via the single UDP socket.
 func (c *Client) udpSend(data []byte, addr *net.UDPAddr) error {
 	c.connMu.Lock()
@@ -521,6 +544,11 @@ func (c *Client) PeerMode(peerID string) string {
 		return pc.Mode
 	}
 	return "-"
+}
+
+// GetPeerForwardMode returns the effective forward mode for a peer (P2P, HOP, or RELAY).
+func (c *Client) GetPeerForwardMode(peerID string) string {
+	return c.getForwardMode(peerID)
 }
 
 // SetForwardMode: forceRelay=true forces relay even when P2P is available.
@@ -787,8 +815,15 @@ func (c *Client) resetP2PState() {
 		pc.Mode = "connecting"
 		pc.UDPAddr = nil
 		pc.Crypto = nil
+		pc.AutoHopVia = ""
+		pc.AutoHopID = ""
 	}
 	c.peerConnsMu.Unlock()
+
+	// Clear P2P connectivity maps
+	c.p2pMapsMu.Lock()
+	c.p2pMaps = make(map[string]map[string]bool)
+	c.p2pMapsMu.Unlock()
 }
 
 // generateMachineID creates a deterministic client ID from MAC address + name.
@@ -897,12 +932,32 @@ func (c *Client) handlePeerList(msg Message) {
 		}
 	}
 
-	// Cancel pending leaves for peers that are back
+	// Cancel pending leaves for peers that are back (reconnected with new ID)
 	c.pendingLeavesMu.Lock()
 	for name, timer := range c.pendingLeaves {
-		if _, back := newNameMap[name]; back {
+		if newID, back := newNameMap[name]; back {
 			timer.Stop()
 			delete(c.pendingLeaves, name)
+
+			// Clean up orphaned PeerConn entries with old IDs for this name.
+			// When a peer reconnects quickly (within 5s debounce), the old
+			// PeerConn (with stale Mode/Crypto/UDPAddr) is never deleted
+			// because the reconnection detection in the "left peers" loop
+			// doesn't trigger (old ID is not in the current oldPeers).
+			c.peerConnsMu.Lock()
+			for id, pc := range c.peerConns {
+				if id != newID && id != c.MyID {
+					// Check if this PeerConn's ID is NOT in the current peer list
+					if !newMap[id] {
+						delete(c.peerConns, id)
+						c.cleanupPeerP2PMap(id)
+						if pc.DirectTCP != nil {
+							pc.DirectTCP.Close()
+						}
+					}
+				}
+			}
+			c.peerConnsMu.Unlock()
 		}
 	}
 	c.pendingLeavesMu.Unlock()
@@ -913,10 +968,21 @@ func (c *Client) handlePeerList(msg Message) {
 			// Check if same name still present (reconnected with new ID)
 			if p.Name != "" {
 				if newID, ok := newNameMap[p.Name]; ok {
+					// Peer reconnected with new ID — clean up ALL old state
+					oldID := p.ID
+
+					// Remove old PeerConn (stale Mode/Crypto/UDPAddr)
+					c.peerConnsMu.Lock()
+					delete(c.peerConns, oldID)
+					c.peerConnsMu.Unlock()
+
+					// Remove old P2P maps and auto-hop routes
+					c.cleanupPeerP2PMap(oldID)
+
 					// Update VPN peer ID if needed
 					c.tunMu.Lock()
-					if dev, ok := c.tunDevices[p.ID]; ok {
-						delete(c.tunDevices, p.ID)
+					if dev, ok := c.tunDevices[oldID]; ok {
+						delete(c.tunDevices, oldID)
 						dev.peerID = newID
 						c.tunDevices[newID] = dev
 						c.tunMu.Unlock()
@@ -924,6 +990,16 @@ func (c *Client) handlePeerList(msg Message) {
 					} else {
 						c.tunMu.Unlock()
 					}
+
+					// Migrate forwarding netstacks
+					c.fwdNetstacksMu.Lock()
+					if ns, ok := c.fwdNetstacks[oldID]; ok {
+						delete(c.fwdNetstacks, oldID)
+						c.fwdNetstacks[newID] = ns
+					}
+					c.fwdNetstacksMu.Unlock()
+
+					c.emit(EventLog, LogEvent{Level: "info", Message: fmt.Sprintf("Peer %s reconnected: cleaned old state, new ID %s", p.Name, shortID(newID))})
 					continue
 				}
 			}
@@ -966,6 +1042,9 @@ func (c *Client) handlePeerList(msg Message) {
 					c.peerConnsMu.Lock()
 					delete(c.peerConns, peerCopy.ID)
 					c.peerConnsMu.Unlock()
+
+					// Clean up P2P maps and auto-hop routes involving this peer
+					c.cleanupPeerP2PMap(peerCopy.ID)
 
 					// Clean up VPN if this peer was our VPN partner
 					c.tunMu.Lock()
@@ -1088,6 +1167,8 @@ func (c *Client) handleRelayData(msg Message) {
 		c.handleFileNack(inner)
 	case "file_stream":
 		c.handleFileStream(inner)
+	case "p2p_map":
+		c.handleP2PMap(inner)
 	case "hop_forward":
 		c.handleHopForward(inner)
 	case "hop_forward_accept":

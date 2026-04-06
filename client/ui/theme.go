@@ -3,6 +3,8 @@ package ui
 import (
 	"image/color"
 
+	"gioui.org/font/gofont"
+	"gioui.org/text"
 	"gioui.org/widget/material"
 )
 
@@ -20,7 +22,10 @@ var (
 )
 
 func NewTheme() *material.Theme {
+	// Explicitly register Go fonts so text renders on all platforms (including Android).
+	// Without this, Android has no system font fallback and shows a black screen.
 	th := material.NewTheme()
+	th.Shaper = text.NewShaper(text.WithCollection(gofont.Collection()))
 	th.Palette.Bg = BgColor
 	th.Palette.Fg = TextColor
 	th.Palette.ContrastBg = AccentColor

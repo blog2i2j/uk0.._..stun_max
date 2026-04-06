@@ -3,6 +3,7 @@
 package main
 
 import (
+	"log"
 	"os"
 	"os/signal"
 	"syscall"
@@ -13,8 +14,10 @@ import (
 )
 
 func main() {
+	log.Println("[STUNMAX] main() started")
 	var a *ui.App
 	go func() {
+		log.Println("[STUNMAX] goroutine: creating App")
 		a = ui.NewApp()
 
 		// Catch OS signals for cleanup (kill, Ctrl+C, etc.)

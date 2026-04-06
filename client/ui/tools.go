@@ -32,6 +32,7 @@ type ToolsPanel struct {
 	CopyUserBtn    widget.Clickable
 	RDP            RDPState
 	CopyMsg        string
+	List           widget.List
 	hasPassword    bool // current user has a password
 	inited         bool
 }
@@ -113,22 +114,25 @@ func (t *ToolsPanel) Layout(gtx layout.Context, th *material.Theme, a *App) layo
 		t.CopyMsg = "Password copied!"
 	}
 
-	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return t.layoutRDPCard(gtx, th)
-		}),
-		// Error
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			if t.RDP.Error == "" {
-				return layout.Dimensions{}
-			}
-			return layout.Inset{Top: unit.Dp(10)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				lbl := material.Body2(th, t.RDP.Error)
-				lbl.Color = ErrorColor
-				return lbl.Layout(gtx)
-			})
-		}),
-	)
+	t.List.Axis = layout.Vertical
+	return material.List(th, &t.List).Layout(gtx, 1, func(gtx layout.Context, _ int) layout.Dimensions {
+		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return t.layoutRDPCard(gtx, th)
+			}),
+			// Error
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				if t.RDP.Error == "" {
+					return layout.Dimensions{}
+				}
+				return layout.Inset{Top: unit.Dp(10)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					lbl := material.Body2(th, t.RDP.Error)
+					lbl.Color = ErrorColor
+					return lbl.Layout(gtx)
+				})
+			}),
+		)
+	})
 }
 
 func (t *ToolsPanel) layoutRDPCard(gtx layout.Context, th *material.Theme) layout.Dimensions {

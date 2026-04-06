@@ -43,11 +43,9 @@ func (s *ConnectScreen) init() {
 	s.PasswordEditor.Mask = '*'
 	s.NameEditor.SingleLine = true
 
-	// Load saved config
-	if cfg := LoadConfig(); cfg != nil {
-		if cfg.ServerURL != "" {
-			s.ServerEditor.SetText(cfg.ServerURL)
-		}
+	// Load saved config or use defaults
+	if cfg := LoadConfig(); cfg != nil && cfg.ServerURL != "" {
+		s.ServerEditor.SetText(cfg.ServerURL)
 		s.RoomEditor.SetText(cfg.Room)
 		s.PasswordEditor.SetText(cfg.Password)
 		s.NameEditor.SetText(cfg.Name)
@@ -99,7 +97,17 @@ func (s *ConnectScreen) Layout(gtx layout.Context, th *material.Theme, a *App) l
 	}
 
 	return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-		gtx.Constraints.Max.X = gtx.Dp(unit.Dp(420))
+		// Responsive: use 420dp or screen width - 32dp padding, whichever is smaller
+		maxCard := gtx.Dp(unit.Dp(420))
+		screenW := gtx.Constraints.Max.X
+		padded := screenW - gtx.Dp(unit.Dp(32))
+		if padded < maxCard {
+			maxCard = padded
+		}
+		if maxCard < gtx.Dp(unit.Dp(280)) {
+			maxCard = gtx.Dp(unit.Dp(280))
+		}
+		gtx.Constraints.Max.X = maxCard
 		gtx.Constraints.Min.X = gtx.Constraints.Max.X
 
 		return layout.Flex{Axis: layout.Vertical, Alignment: layout.Middle}.Layout(gtx,
@@ -107,20 +115,19 @@ func (s *ConnectScreen) Layout(gtx layout.Context, th *material.Theme, a *App) l
 				return layoutCard(gtx, func(gtx layout.Context) layout.Dimensions {
 					return layout.Inset{Top: unit.Dp(32), Bottom: unit.Dp(32), Left: unit.Dp(32), Right: unit.Dp(32)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 						return layout.Flex{Axis: layout.Vertical, Alignment: layout.Middle}.Layout(gtx,
-							// Title
+							// Logo
 							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-								title := material.H5(th, "STUN Max")
-								title.Color = AccentColor
-								title.Alignment = text.Middle
-								return title.Layout(gtx)
-							}),
-							// Subtitle
-							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-								return layout.Inset{Top: unit.Dp(4), Bottom: unit.Dp(24)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-									sub := material.Body2(th, "P2P Tunnel Client")
-									sub.Color = DimColor
-									sub.Alignment = text.Middle
-									return sub.Layout(gtx)
+								initLogo()
+								if logoSize.X == 0 {
+									return layout.Dimensions{}
+								}
+								sz := gtx.Dp(unit.Dp(64))
+								return layout.Inset{Bottom: unit.Dp(12)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+									return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+										gtx.Constraints = layout.Exact(image.Pt(sz, sz))
+										img := widget.Image{Src: logoOp, Fit: widget.Contain}
+										return img.Layout(gtx)
+									})
 								})
 							}),
 							// Server input

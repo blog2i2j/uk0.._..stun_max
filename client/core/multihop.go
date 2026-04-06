@@ -74,9 +74,18 @@ func (c *Client) handleHopForward(msg Message) {
 	}
 
 	c.acMu.RLock()
-	allowed := c.allowForward
+	allowedFwd := c.allowForward
+	allowedHop := c.allowHopRelay
 	c.acMu.RUnlock()
-	if !allowed {
+	// Auto-initiated hops require allowHopRelay; manual hops require allowForward
+	if req.Auto && !allowedHop {
+		c.sendRelay(msg.From, "hop_forward_reject", HopForwardReject{
+			HopID:  req.HopID,
+			Reason: "hop relay disabled",
+		})
+		return
+	}
+	if !req.Auto && !allowedFwd {
 		c.sendRelay(msg.From, "hop_forward_reject", HopForwardReject{
 			HopID:  req.HopID,
 			Reason: "forwarding disabled",

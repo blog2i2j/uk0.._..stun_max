@@ -219,3 +219,6 @@ func checkForwardingStatus() string {
 	out, _ := exec.Command("sysctl", "net.inet.ip.forwarding").CombinedOutput()
 	return strings.TrimSpace(string(out))
 }
+
+// stopPlatformVPN is a no-op on macOS.
+func stopPlatformVPN() {}

@@ -29,6 +29,7 @@ type SettingsPanel struct {
 	LocalOnly     widget.Bool
 	AllowVPN      widget.Bool
 	AllowFileRecv widget.Bool
+	AllowHopRelay widget.Bool
 	Autostart     widget.Bool
 	AutoConnect  widget.Bool
 	AutoLogin    widget.Bool
@@ -58,6 +59,7 @@ func (s *SettingsPanel) init(a *App) {
 	s.LocalOnly.Value = true
 	s.AllowVPN.Value = true
 	s.AllowFileRecv.Value = true
+	s.AllowHopRelay.Value = true
 	s.Autostart.Value = GetAutostart()
 	if cfg := LoadConfig(); cfg != nil {
 		s.AutoConnect.Value = cfg.AutoConnect
@@ -72,6 +74,9 @@ func (s *SettingsPanel) init(a *App) {
 		}
 		if cfg.AllowFileRecv != nil {
 			s.AllowFileRecv.Value = *cfg.AllowFileRecv
+		}
+		if cfg.AllowHopRelay != nil {
+			s.AllowHopRelay.Value = *cfg.AllowHopRelay
 		}
 	}
 
@@ -157,6 +162,12 @@ func (s *SettingsPanel) Layout(gtx layout.Context, th *material.Theme, a *App) l
 			a.Client.SetAllowFileRecv(s.AllowFileRecv.Value)
 		}
 		saveBoolSetting(func(cfg *SavedConfig) { v := s.AllowFileRecv.Value; cfg.AllowFileRecv = &v })
+	}
+	if s.AllowHopRelay.Update(gtx) {
+		if a.Client != nil {
+			a.Client.SetAllowHopRelay(s.AllowHopRelay.Value)
+		}
+		saveBoolSetting(func(cfg *SavedConfig) { v := s.AllowHopRelay.Value; cfg.AllowHopRelay = &v })
 	}
 	if s.Autostart.Update(gtx) {
 		SetAutostart(s.Autostart.Value)
@@ -252,6 +263,13 @@ func (s *SettingsPanel) Layout(gtx layout.Context, th *material.Theme, a *App) l
 				"Allow File Receive",
 				"When enabled, other peers can send files to you. Files auto-save to Downloads/StunMax.",
 				&s.AllowFileRecv,
+			)
+		},
+		func(gtx layout.Context) layout.Dimensions {
+			return s.layoutSettingCard(gtx, th,
+				"Allow Hop Relay",
+				"When enabled, other peers can route traffic through your P2P connections as an auto-hop relay.",
+				&s.AllowHopRelay,
 			)
 		},
 		func(gtx layout.Context) layout.Dimensions {

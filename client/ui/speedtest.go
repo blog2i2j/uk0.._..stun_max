@@ -110,7 +110,8 @@ func (s *SpeedTestPanel) Layout(gtx layout.Context, th *material.Theme, a *App) 
 	errMsg := s.Error
 	s.mu.Unlock()
 
-	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+	return material.List(th, &s.List).Layout(gtx, 1, func(gtx layout.Context, _ int) layout.Dimensions {
+		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		// Form card
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layout.Stack{}.Layout(gtx,
@@ -127,32 +128,32 @@ func (s *SpeedTestPanel) Layout(gtx layout.Context, th *material.Theme, a *App) 
 								lbl.Color = TextColor
 								return lbl.Layout(gtx)
 							}),
-							// Peer selector + size buttons + run buttons
+							// Row 1: Peer selector (full width)
 							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 								return layout.Inset{Top: unit.Dp(12)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-									return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-										layout.Flexed(0.25, func(gtx layout.Context) layout.Dimensions {
-											return s.PeerSel.Layout(gtx, th, a)
-										}),
-										layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
-										layout.Flexed(0.45, func(gtx layout.Context) layout.Dimensions {
-											return s.layoutSizeSelector(gtx, th)
-										}),
-										layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
-										layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-											label := fmt.Sprintf("P2P %dMB", s.SizeMB)
-											btn := material.Button(th, &s.RunBtn, label)
-											btn.Background = SuccessColor
-											btn.Color = color.NRGBA{A: 255}
-											btn.CornerRadius = unit.Dp(4)
-											btn.Inset = layout.Inset{Top: unit.Dp(8), Bottom: unit.Dp(8), Left: unit.Dp(16), Right: unit.Dp(16)}
-											if running {
-												btn.Background = DimColor
-												btn.Text = "Running..."
-											}
-											return btn.Layout(gtx)
-										}),
-									)
+									return s.PeerSel.Layout(gtx, th, a)
+								})
+							}),
+							// Row 2: Size buttons
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								return layout.Inset{Top: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+									return s.layoutSizeSelector(gtx, th)
+								})
+							}),
+							// Row 3: Run button (full width)
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								return layout.Inset{Top: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+									label := fmt.Sprintf("P2P %dMB", s.SizeMB)
+									btn := material.Button(th, &s.RunBtn, label)
+									btn.Background = SuccessColor
+									btn.Color = color.NRGBA{A: 255}
+									btn.CornerRadius = unit.Dp(4)
+									btn.Inset = layout.Inset{Top: unit.Dp(8), Bottom: unit.Dp(8), Left: unit.Dp(16), Right: unit.Dp(16)}
+									if running {
+										btn.Background = DimColor
+										btn.Text = "Running..."
+									}
+									return btn.Layout(gtx)
 								})
 							}),
 							// Error
@@ -245,6 +246,7 @@ func (s *SpeedTestPanel) Layout(gtx layout.Context, th *material.Theme, a *App) 
 			})
 		}),
 	)
+	})
 }
 
 func (s *SpeedTestPanel) layoutSizeSelector(gtx layout.Context, th *material.Theme) layout.Dimensions {

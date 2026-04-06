@@ -1,0 +1,180 @@
+name: Build Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-binaries:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: true
+
+      - name: Determine version
+        id: version
+        run: echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+      - name: Build all binaries
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          mkdir -p build
+
+          # Server (linux/amd64)
+          echo "Building server..."
+          GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build \
+            -ldflags="-s -w" -o "build/stun_max-server-linux-amd64" ./server/
+
+          # STUN Server (linux/amd64)
+          echo "Building stunserver..."
+          GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build \
+            -ldflags="-s -w" -o "build/stun_max-stunserver-linux-amd64" ./tools/stunserver/
+
+          # NAT Check (multi-platform)
+          echo "Building natcheck..."
+          GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build \
+            -ldflags="-s -w" -o "build/natcheck-windows-amd64.exe" ./tools/natcheck/
+          GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build \
+            -ldflags="-s -w" -o "build/natcheck-linux-amd64" ./tools/natcheck/
+
+          # CLI Client (multi-platform)
+          echo "Building CLI clients..."
+          GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -tags cli \
+            -ldflags="-s -w" -o "build/stun_max-cli-windows-amd64.exe" ./client/
+          GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -tags cli \
+            -ldflags="-s -w" -o "build/stun_max-cli-linux-amd64" ./client/
+
+          # GUI Client Windows (no CGO)
+          echo "Building Windows GUI client..."
+          GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build \
+            -ldflags="-s -w -H windowsgui" -o "build/stun_max-client-windows-amd64.exe" ./client/
+
+          # Web assets
+          cp -r web build/web
+
+          echo ""
+          echo "Build artifacts:"
+          ls -lh build/ | grep -v "^total"
+
+      - name: Package web assets
+        run: cd build && tar czf web-dashboard.tar.gz web/
+
+      - name: Upload to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            build/stun_max-server-linux-amd64
+            build/stun_max-stunserver-linux-amd64
+            build/natcheck-windows-amd64.exe
+            build/natcheck-linux-amd64
+            build/stun_max-cli-windows-amd64.exe
+            build/stun_max-cli-linux-amd64
+            build/stun_max-client-windows-amd64.exe
+            build/web-dashboard.tar.gz
+          draft: false
+          prerelease: false
+
+  build-macos:
+    runs-on: macos-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: true
+
+      - name: Build macOS binaries
+        run: |
+          mkdir -p build
+
+          # GUI Client (macOS ARM64, needs CGO for native dialogs)
+          echo "Building macOS GUI client..."
+          GOOS=darwin GOARCH=arm64 go build \
+            -ldflags="-s -w" -o "build/stun_max-client-darwin-arm64" ./client/
+
+          # CLI Client (macOS ARM64)
+          echo "Building macOS CLI client..."
+          GOOS=darwin GOARCH=arm64 go build -tags cli \
+            -ldflags="-s -w" -o "build/stun_max-cli-darwin-arm64" ./client/
+
+          # NAT Check (macOS ARM64)
+          echo "Building macOS natcheck..."
+          GOOS=darwin GOARCH=arm64 go build \
+            -ldflags="-s -w" -o "build/natcheck-darwin-arm64" ./tools/natcheck/
+
+          ls -lh build/
+
+      - name: Upload to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            build/stun_max-client-darwin-arm64
+            build/stun_max-cli-darwin-arm64
+            build/natcheck-darwin-arm64
+          draft: false
+          prerelease: false
+
+  build-android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: true
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          cmdline-tools-version: '11076708'
+
+      - name: Install Android NDK
+        run: sdkmanager --install "ndk;26.1.10909125" "platforms;android-34" "build-tools;34.0.0"
+
+      - name: Install gogio
+        run: go install gioui.org/cmd/gogio@latest
+
+      - name: Build Android APK
+        env:
+          ANDROID_HOME: /usr/local/lib/android/sdk
+          ANDROID_NDK_HOME: /usr/local/lib/android/sdk/ndk/26.1.10909125
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/}"
+          mkdir -p build
+
+          gogio \
+            -target android \
+            -appid com.stunmax.app \
+            -version "${VERSION}" \
+            -minsdk 24 \
+            -o "build/stun_max-android-${VERSION}.apk" \
+            ./client/
+
+      - name: Upload to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: build/stun_max-android-*.apk
+          draft: false
+          prerelease: false

@@ -88,55 +88,57 @@ func (ps *PeerSelector) Layout(gtx layout.Context, th *material.Theme, a *App) l
 		area.Pop()
 	}
 
-	return layout.Stack{Alignment: layout.NW}.Layout(gtx,
-		// Main button (always visible)
-		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
-			return ps.mainBtn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				return layout.Stack{}.Layout(gtx,
-					layout.Expanded(func(gtx layout.Context) layout.Dimensions {
-						rr := clip.UniformRRect(image.Rect(0, 0, gtx.Constraints.Max.X, gtx.Constraints.Min.Y), gtx.Dp(unit.Dp(4)))
-						paint.FillShape(gtx.Ops, InputBg, rr.Op(gtx.Ops))
-						return layout.Dimensions{Size: image.Pt(gtx.Constraints.Max.X, gtx.Constraints.Min.Y)}
-					}),
-					layout.Stacked(func(gtx layout.Context) layout.Dimensions {
-						return layout.UniformInset(unit.Dp(8)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-							return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
-								layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-									text := ps.Selected
-									c := TextColor
-									if text == "" {
-										text = ps.hint
-										c = DimColor
-									}
-									lbl := material.Body2(th, text)
-									lbl.Color = c
-									return lbl.Layout(gtx)
-								}),
-								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-									arrow := "▼"
-									if ps.open {
-										arrow = "▲"
-									}
-									lbl := material.Body2(th, arrow)
-									lbl.Color = DimColor
-									return lbl.Layout(gtx)
-								}),
-							)
-						})
-					}),
-				)
-			})
-		}),
-		// Dropdown overlay (when open)
-		layout.Expanded(func(gtx layout.Context) layout.Dimensions {
-			if !ps.open || len(available) == 0 {
-				return layout.Dimensions{}
-			}
-			// Offset below the main button
-			defer op.Offset(image.Pt(0, gtx.Dp(unit.Dp(38)))).Push(gtx.Ops).Pop()
-			return ps.layoutDropdown(gtx, th, available)
-		}),
-	)
+	// Render the main button and measure its size
+	dims := ps.mainBtn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		return layout.Stack{}.Layout(gtx,
+			layout.Expanded(func(gtx layout.Context) layout.Dimensions {
+				rr := clip.UniformRRect(image.Rect(0, 0, gtx.Constraints.Max.X, gtx.Constraints.Min.Y), gtx.Dp(unit.Dp(4)))
+				paint.FillShape(gtx.Ops, InputBg, rr.Op(gtx.Ops))
+				return layout.Dimensions{Size: image.Pt(gtx.Constraints.Max.X, gtx.Constraints.Min.Y)}
+			}),
+			layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+				return layout.UniformInset(unit.Dp(8)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
+						layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+							text := ps.Selected
+							c := TextColor
+							if text == "" {
+								text = ps.hint
+								c = DimColor
+							}
+							lbl := material.Body2(th, text)
+							lbl.Color = c
+							return lbl.Layout(gtx)
+						}),
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							arrow := "▼"
+							if ps.open {
+								arrow = "▲"
+							}
+							lbl := material.Body2(th, arrow)
+							lbl.Color = DimColor
+							return lbl.Layout(gtx)
+						}),
+					)
+				})
+			}),
+		)
+	})
+
+	// Dropdown overlay — use op.Defer so it renders on TOP of all other widgets
+	if ps.open && len(available) > 0 {
+		m := op.Record(gtx.Ops)
+		offY := dims.Size.Y + gtx.Dp(unit.Dp(2))
+		stack := op.Offset(image.Pt(0, offY)).Push(gtx.Ops)
+		dropGtx := gtx
+		dropGtx.Constraints.Max.X = dims.Size.X
+		ps.layoutDropdown(dropGtx, th, available)
+		stack.Pop()
+		call := m.Stop()
+		op.Defer(gtx.Ops, call)
+	}
+
+	return dims
 }
 
 func (ps *PeerSelector) layoutDropdown(gtx layout.Context, th *material.Theme, peers []peerOption) layout.Dimensions {

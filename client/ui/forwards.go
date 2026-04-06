@@ -29,6 +29,7 @@ type ForwardsPanel struct {
 	StartFwdBtns map[int]*widget.Clickable // start a stopped saved forward
 	ModeBtns    map[int]*widget.Clickable
 	List        widget.List
+	PageList    widget.List // outer scrollable list for the entire page
 	Error       string
 
 	// Expose (reverse forward) form
@@ -280,42 +281,50 @@ func (f *ForwardsPanel) Layout(gtx layout.Context, th *material.Theme, a *App) l
 		return pi < pj
 	})
 
-	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return f.layoutForm(gtx, th, a)
-		}),
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return layout.Inset{Top: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				return f.layoutExposeForm(gtx, th, a)
-			})
-		}),
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return layout.Inset{Top: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				return f.layoutHopForm(gtx, th, a)
-			})
-		}),
-		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-			return layout.Inset{Top: unit.Dp(16)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+	f.PageList.Axis = layout.Vertical
+	return material.List(th, &f.PageList).Layout(gtx, 1, func(gtx layout.Context, _ int) layout.Dimensions {
+		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return f.layoutForm(gtx, th, a)
+			}),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return layout.Inset{Top: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					return f.layoutExposeForm(gtx, th, a)
+				})
+			}),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return layout.Inset{Top: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					return f.layoutHopForm(gtx, th, a)
+				})
+			}),
+			// Forward list
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				if len(items) == 0 {
-					return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					return layout.Inset{Top: unit.Dp(16)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 						lbl := material.Body1(th, "No forwards configured")
 						lbl.Color = DimColor
 						return lbl.Layout(gtx)
 					})
 				}
-				list := material.List(th, &f.List)
-				return list.Layout(gtx, len(items), func(gtx layout.Context, i int) layout.Dimensions {
-					return layout.Inset{Bottom: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-						item := items[i]
-						if item.Active {
-							return f.layoutActiveCard(gtx, th, item.Info)
-						}
-						return f.layoutStoppedCard(gtx, th, item.Saved)
-					})
+				return layout.Inset{Top: unit.Dp(16)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					var children []layout.FlexChild
+					for idx := range items {
+						i := idx
+						children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							return layout.Inset{Bottom: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+								item := items[i]
+								if item.Active {
+									return f.layoutActiveCard(gtx, th, item.Info)
+								}
+								return f.layoutStoppedCard(gtx, th, item.Saved)
+							})
+						}))
+					}
+					return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
 				})
-			})
-		}),
-	)
+			}),
+		)
+	})
 }
 
 func (f *ForwardsPanel) stopBtn(port int) *widget.Clickable {
@@ -361,19 +370,23 @@ func (f *ForwardsPanel) layoutForm(gtx layout.Context, th *material.Theme, a *Ap
 						lbl.Color = TextColor
 						return lbl.Layout(gtx)
 					}),
+					// Row 1: Peer selector (full width)
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 						return layout.Inset{Top: unit.Dp(12)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-							return layout.Flex{Axis: layout.Horizontal, Spacing: layout.SpaceEvenly}.Layout(gtx,
+							return f.PeerSel.Layout(gtx, th, a)
+						})
+					}),
+					// Row 2: host:port input (full width)
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return layout.Inset{Top: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+							return layoutInputField(gtx, th, &f.HostEditor, "host:port")
+						})
+					}),
+					// Row 3: Local port + Start button (side by side)
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return layout.Inset{Top: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+							return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 								layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-									return f.PeerSel.Layout(gtx, th, a)
-								}),
-								layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
-								layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-									return layoutInputField(gtx, th, &f.HostEditor, "host:port")
-								}),
-								layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
-								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-									gtx.Constraints.Max.X = gtx.Dp(unit.Dp(80))
 									return layoutInputField(gtx, th, &f.LocalEditor, "Local port")
 								}),
 								layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
@@ -593,24 +606,31 @@ func (f *ForwardsPanel) layoutExposeForm(gtx layout.Context, th *material.Theme,
 							return lbl.Layout(gtx)
 						})
 					}),
+					// Row 1: Host input (full width)
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 						return layout.Inset{Top: unit.Dp(12)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-							return layout.Flex{Axis: layout.Horizontal, Spacing: layout.SpaceEvenly}.Layout(gtx,
+							return layoutInputField(gtx, th, &f.ExposeHostEditor, "Host (default 127.0.0.1)")
+						})
+					}),
+					// Row 2: Your port + Peer selector
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return layout.Inset{Top: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+							return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 								layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-									return layoutInputField(gtx, th, &f.ExposeHostEditor, "Host (default 127.0.0.1)")
-								}),
-								layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
-								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-									gtx.Constraints.Max.X = gtx.Dp(unit.Dp(90))
 									return layoutInputField(gtx, th, &f.ExposePortEditor, "Your port")
 								}),
 								layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
 								layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 									return f.ExposePeerSel.Layout(gtx, th, a)
 								}),
-								layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
-								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-									gtx.Constraints.Max.X = gtx.Dp(unit.Dp(90))
+							)
+						})
+					}),
+					// Row 3: Remote port + Expose button
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return layout.Inset{Top: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+							return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+								layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 									return layoutInputField(gtx, th, &f.ExposeRemoteEditor, "Remote port")
 								}),
 								layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
@@ -663,9 +683,10 @@ func (f *ForwardsPanel) layoutHopForm(gtx layout.Context, th *material.Theme, a 
 							return lbl.Layout(gtx)
 						})
 					}),
+					// Row 1: Via peer + Target peer
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 						return layout.Inset{Top: unit.Dp(12)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-							return layout.Flex{Axis: layout.Horizontal, Spacing: layout.SpaceEvenly}.Layout(gtx,
+							return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 								layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 									return f.HopViaSel.Layout(gtx, th, a)
 								}),
@@ -673,13 +694,20 @@ func (f *ForwardsPanel) layoutHopForm(gtx layout.Context, th *material.Theme, a 
 								layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 									return f.HopTargetSel.Layout(gtx, th, a)
 								}),
-								layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
+							)
+						})
+					}),
+					// Row 2: host:port input (full width)
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return layout.Inset{Top: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+							return layoutInputField(gtx, th, &f.HopHostEditor, "host:port")
+						})
+					}),
+					// Row 3: Local port + Hop button
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return layout.Inset{Top: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+							return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 								layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-									return layoutInputField(gtx, th, &f.HopHostEditor, "host:port")
-								}),
-								layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
-								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-									gtx.Constraints.Max.X = gtx.Dp(unit.Dp(80))
 									return layoutInputField(gtx, th, &f.HopLocalEditor, "Local port")
 								}),
 								layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),

@@ -33,6 +33,8 @@ const (
 	EventTunStarted
 	EventTunStopped
 	EventTunError
+	EventAutoHopEstablished
+	EventAutoHopFailed
 )
 
 // Event is the unit of communication from Client to the GUI layer.

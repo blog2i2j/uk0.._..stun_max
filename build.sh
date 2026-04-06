@@ -37,6 +37,22 @@ GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -tags cli -ldflags="-s -w" -o "$B
 echo "  web assets"
 cp -r web "$BUILD_DIR/web"
 
+# Android APK (optional — requires gogio + Android SDK/NDK)
+if command -v gogio &> /dev/null && [ -n "$ANDROID_HOME" ]; then
+    echo "  android apk"
+    gogio \
+        -target android \
+        -appid com.stunmax.app \
+        -version "$VERSION" \
+        -minsdk 24 \
+        -o "$BUILD_DIR/stun_max-android-$VERSION.apk" \
+        ./client/ 2>/dev/null && echo "    -> stun_max-android-$VERSION.apk" || echo "    -> skipped (build failed)"
+else
+    echo "  android apk — skipped (gogio or ANDROID_HOME not found)"
+    echo "    install: go install gioui.org/cmd/gogio@latest"
+    echo "    set ANDROID_HOME and install NDK via sdkmanager"
+fi
+
 echo ""
 echo "Build complete:"
 ls -lh "$BUILD_DIR"/ | grep -v "^total"

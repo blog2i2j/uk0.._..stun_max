@@ -27,6 +27,17 @@ func (c *Client) StartForward(peerID, host string, remotePort, localPort int) er
 	if err != nil {
 		return err
 	}
+
+	// Auto-hop: if target is relay-only, check for a hop candidate
+	mode := c.getForwardMode(fullID)
+	if mode == "RELAY" {
+		if viaID := c.findAutoHopCandidate(fullID); viaID != "" {
+			c.emit(EventLog, LogEvent{Level: "info", Message: fmt.Sprintf(
+				"Auto-hop: routing :%d to %s via %s", localPort, shortID(fullID), shortID(viaID))})
+			return c.StartHopForward(viaID, fullID, host, remotePort, localPort)
+		}
+	}
+
 	c.forwardsMu.RLock()
 	if _, exists := c.forwards[localPort]; exists {
 		c.forwardsMu.RUnlock()
@@ -59,7 +70,7 @@ func (c *Client) StartForward(peerID, host string, remotePort, localPort int) er
 	c.forwards[localPort] = fwd
 	c.forwardsMu.Unlock()
 
-	mode := c.getForwardMode(fullID)
+	mode = c.getForwardMode(fullID)
 	c.emit(EventForwardStarted, ForwardEvent{
 		LocalPort: localPort, RemoteHost: host, RemotePort: remotePort,
 		PeerName: peerName, Mode: mode,
@@ -74,8 +85,13 @@ func (c *Client) StartForward(peerID, host string, remotePort, localPort int) er
 func (c *Client) getForwardMode(peerID string) string {
 	c.peerConnsMu.RLock()
 	defer c.peerConnsMu.RUnlock()
-	if pc, ok := c.peerConns[peerID]; ok && pc.Mode == "direct" {
-		return "P2P"
+	if pc, ok := c.peerConns[peerID]; ok {
+		if pc.Mode == "direct" {
+			return "P2P"
+		}
+		if pc.AutoHopVia != "" {
+			return "HOP"
+		}
 	}
 	return "RELAY"
 }

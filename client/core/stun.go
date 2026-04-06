@@ -443,6 +443,9 @@ func (c *Client) onHolePunchSuccess(peerID string, addr *net.UDPAddr) {
 	c.emit(EventHolePunchSuccess, PeerEvent{ID: peerID, Status: "direct"})
 	c.sendStatusUpdate("direct")
 	c.sendKeyExchange(peerID)
+
+	// Broadcast updated P2P connectivity map so peers can discover auto-hop routes
+	go c.broadcastP2PMap()
 }
 
 // sendKeyExchange sends our X25519 public key to a peer over UDP.
@@ -966,6 +969,9 @@ func (c *Client) startRetryLoop() {
 			c.peerConnsMu.RUnlock()
 
 		case <-retryTicker.C:
+			// Periodically broadcast P2P map for auto-hop discovery
+			go c.broadcastP2PMap()
+
 			c.peerConnsMu.Lock()
 			var retryPeers []string
 			for peerID, pc := range c.peerConns {
@@ -979,6 +985,10 @@ func (c *Client) startRetryLoop() {
 				if pc.Mode == "connecting" && pc.PunchFails >= 5 {
 					pc.Mode = "relay"
 					c.emit(EventLog, LogEvent{Level: "warn", Message: fmt.Sprintf("P2P punch failed 5 times for %s, using relay", shortID(peerID))})
+					// Try to discover auto-hop route
+					if pc.AutoHopVia == "" {
+						go c.tryAutoHop(peerID)
+					}
 				}
 				retryPeers = append(retryPeers, peerID)
 			}

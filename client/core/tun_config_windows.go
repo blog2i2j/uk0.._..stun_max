@@ -92,8 +92,10 @@ func protectServerRoute(serverHost string) {
 	serverIP := ips[0]
 
 	// Find default gateway
-	out, _ := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command",
-		`(Get-NetRoute -DestinationPrefix '0.0.0.0/0' | Sort-Object RouteMetric | Select-Object -First 1).NextHop`).CombinedOutput()
+	cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command",
+		`(Get-NetRoute -DestinationPrefix '0.0.0.0/0' | Sort-Object RouteMetric | Select-Object -First 1).NextHop`)
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	out, _ := cmd.CombinedOutput()
 	gw := strings.TrimSpace(string(out))
 	if gw == "" || gw == "0.0.0.0" {
 		return
@@ -271,3 +273,6 @@ func runSilent(name string, args ...string) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
 	cmd.Run()
 }
+
+// stopPlatformVPN is a no-op on Windows.
+func stopPlatformVPN() {}

@@ -34,6 +34,7 @@ type DashboardScreen struct {
 	ActiveTab     Tab
 	TabButtons    [8]widget.Clickable
 	DisconnectBtn widget.Clickable
+	TabList       widget.List // scrollable tab bar for mobile
 
 	Peers     PeersPanel
 	Forwards  ForwardsPanel
@@ -43,6 +44,8 @@ type DashboardScreen struct {
 	Tools     ToolsPanel
 	Settings  SettingsPanel
 	Logs      LogsPanel
+
+	tabInited bool
 }
 
 // Layout renders the dashboard screen.
@@ -102,18 +105,23 @@ func (d *DashboardScreen) layoutTopBar(gtx layout.Context, th *material.Theme, a
 			return layout.Dimensions{Size: image.Pt(gtx.Constraints.Max.X, gtx.Constraints.Min.Y)}
 		}),
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
-			return layout.Inset{Top: unit.Dp(12), Bottom: unit.Dp(12), Left: unit.Dp(16), Right: unit.Dp(16)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Top: unit.Dp(8), Bottom: unit.Dp(8), Left: unit.Dp(8), Right: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				return layout.Flex{Axis: layout.Horizontal, Spacing: layout.SpaceBetween, Alignment: layout.Middle}.Layout(gtx,
 					layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 						return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-								title := material.H6(th, "STUN Max")
-								title.Color = AccentColor
-								return title.Layout(gtx)
+								initLogo()
+								if logoSize.X == 0 {
+									return layout.Dimensions{}
+								}
+								sz := gtx.Dp(unit.Dp(28))
+								gtx.Constraints = layout.Exact(image.Pt(sz, sz))
+								img := widget.Image{Src: logoOp, Fit: widget.Contain}
+								return img.Layout(gtx)
 							}),
 							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-								return layout.Inset{Left: unit.Dp(12)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-									room := material.Body2(th, "Room: "+a.RoomName)
+								return layout.Inset{Left: unit.Dp(6)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+									room := material.Caption(th, "Room: "+a.RoomName)
 									room.Color = DimColor
 									return room.Layout(gtx)
 								})
@@ -125,8 +133,8 @@ func (d *DashboardScreen) layoutTopBar(gtx layout.Context, th *material.Theme, a
 						btn.Background = ErrorColor
 						btn.Color = color.NRGBA{R: 255, G: 255, B: 255, A: 255}
 						btn.CornerRadius = unit.Dp(4)
-						btn.TextSize = unit.Sp(13)
-						btn.Inset = layout.Inset{Top: unit.Dp(6), Bottom: unit.Dp(6), Left: unit.Dp(12), Right: unit.Dp(12)}
+						btn.TextSize = unit.Sp(11)
+						btn.Inset = layout.Inset{Top: unit.Dp(4), Bottom: unit.Dp(4), Left: unit.Dp(8), Right: unit.Dp(8)}
 						return btn.Layout(gtx)
 					}),
 				)
@@ -136,6 +144,11 @@ func (d *DashboardScreen) layoutTopBar(gtx layout.Context, th *material.Theme, a
 }
 
 func (d *DashboardScreen) layoutTabBar(gtx layout.Context, th *material.Theme) layout.Dimensions {
+	if !d.tabInited {
+		d.tabInited = true
+		d.TabList.Axis = layout.Horizontal
+	}
+
 	return layout.Stack{}.Layout(gtx,
 		layout.Expanded(func(gtx layout.Context) layout.Dimensions {
 			// Bottom border
@@ -144,15 +157,11 @@ func (d *DashboardScreen) layoutTabBar(gtx layout.Context, th *material.Theme) l
 			return layout.Dimensions{Size: sz}
 		}),
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
-			return layout.Inset{Left: unit.Dp(16), Right: unit.Dp(16)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				children := make([]layout.FlexChild, len(d.TabButtons))
-				for i := range d.TabButtons {
-					idx := i
-					children[idx] = layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return d.layoutTab(gtx, th, idx)
-					})
-				}
-				return layout.Flex{Axis: layout.Horizontal}.Layout(gtx, children...)
+			return layout.Inset{Left: unit.Dp(8), Right: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				// Scrollable horizontal tab list without scrollbar indicator
+				return d.TabList.Layout(gtx, len(d.TabButtons), func(gtx layout.Context, idx int) layout.Dimensions {
+					return d.layoutTab(gtx, th, idx)
+				})
 			})
 		}),
 	)
@@ -163,7 +172,7 @@ func (d *DashboardScreen) layoutTab(gtx layout.Context, th *material.Theme, idx 
 	return layout.Stack{Alignment: layout.S}.Layout(gtx,
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
 			return d.TabButtons[idx].Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				return layout.Inset{Top: unit.Dp(10), Bottom: unit.Dp(10), Left: unit.Dp(16), Right: unit.Dp(16)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return layout.Inset{Top: unit.Dp(8), Bottom: unit.Dp(8), Left: unit.Dp(6), Right: unit.Dp(6)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 					lbl := material.Body2(th, tabNames[idx])
 					if active {
 						lbl.Color = AccentColor

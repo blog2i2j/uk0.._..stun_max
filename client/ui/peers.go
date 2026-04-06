@@ -149,6 +149,9 @@ func layoutBadge(gtx layout.Context, th *material.Theme, mode string) layout.Dim
 	case "relay", "RELAY":
 		bg = WarningColor
 		label = "RELAY"
+	case "HOP":
+		bg = color.NRGBA{R: 0x00, G: 0xBC, B: 0xD4, A: 0xFF} // cyan
+		label = "HOP"
 	case "YOU":
 		bg = AccentColor
 		label = "YOU"

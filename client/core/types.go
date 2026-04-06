@@ -55,6 +55,8 @@ type PeerConn struct {
 	LastPunch  time.Time
 	PunchFails int              // consecutive punch failures
 	Crypto     *PeerCrypto      // encryption state
+	AutoHopVia string           // if non-empty, this peer is reached via auto-hop through this peer
+	AutoHopID  string           // hop ID for the auto-hop bridge
 }
 
 // TunnelOpen is sent to request opening a tunnel to a peer's local port.
@@ -144,6 +146,12 @@ type HopForwardRequest struct {
 	TargetPeerID string `json:"target_peer_id"`
 	TargetHost   string `json:"target_host"`
 	TargetPort   int    `json:"target_port"`
+	Auto         bool   `json:"auto,omitempty"` // true if auto-discovered hop
+}
+
+// P2PMap broadcasts which peers a node has direct P2P connections with.
+type P2PMap struct {
+	DirectPeers []string `json:"direct_peers"`
 }
 
 // HopForwardAccept is sent by B back to A confirming the bridge is ready.
@@ -312,7 +320,7 @@ type ForwardInfo struct {
 	RemotePort int
 	PeerID     string
 	PeerName   string
-	Mode       string // "P2P" or "RELAY"
+	Mode       string // "P2P", "RELAY", or "HOP"
 	ForceRelay bool   // user manually forced relay
 	ConnCount  int
 	BytesUp    int64   // total bytes uploaded

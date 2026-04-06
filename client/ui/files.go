@@ -9,8 +9,6 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/sqweek/dialog"
-
 	"gioui.org/layout"
 	"gioui.org/op/clip"
 	"gioui.org/op/paint"
@@ -20,6 +18,8 @@ import (
 
 	"stun_max/client/core"
 )
+
+// openFilePicker is defined in files_picker_desktop.go / files_picker_android.go
 
 // FilesPanel manages file transfer UI.
 type FilesPanel struct {
@@ -141,7 +141,7 @@ func (f *FilesPanel) Layout(gtx layout.Context, th *material.Theme, a *App) layo
 	// Handle browse button — open native file picker
 	if f.BrowseBtn.Clicked(gtx) {
 		go func() {
-			file, err := dialog.File().Title("Select file to send").Load()
+			file, err := openFilePicker()
 			if err == nil && file != "" {
 				f.PathEditor.SetText(file)
 				a.Window.Invalidate()
@@ -263,41 +263,41 @@ func (f *FilesPanel) layoutSendForm(gtx layout.Context, th *material.Theme, a *A
 						lbl.Color = TextColor
 						return lbl.Layout(gtx)
 					}),
+					// Peer selector
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 						return layout.Inset{Top: unit.Dp(12)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+							return f.PeerSel.Layout(gtx, th, a)
+						})
+					}),
+					// File path + Browse
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return layout.Inset{Top: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 							return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-								layout.Flexed(0.3, func(gtx layout.Context) layout.Dimensions {
-									return f.PeerSel.Layout(gtx, th, a)
-								}),
-								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-									return layout.Spacer{Width: unit.Dp(8)}.Layout(gtx)
-								}),
-								layout.Flexed(0.45, func(gtx layout.Context) layout.Dimensions {
+								layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 									return layoutInputField(gtx, th, &f.PathEditor, "File path")
 								}),
 								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-									return layout.Spacer{Width: unit.Dp(4)}.Layout(gtx)
-								}),
-								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-									btn := material.Button(th, &f.BrowseBtn, "Browse")
-									btn.Background = InputBg
-									btn.Color = TextColor
-									btn.CornerRadius = unit.Dp(4)
-									btn.Inset = layout.Inset{Top: unit.Dp(8), Bottom: unit.Dp(8), Left: unit.Dp(12), Right: unit.Dp(12)}
-									return btn.Layout(gtx)
-								}),
-								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-									return layout.Spacer{Width: unit.Dp(8)}.Layout(gtx)
-								}),
-								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-									btn := material.Button(th, &f.SendBtn, "Send")
-									btn.Background = AccentColor
-									btn.Color = color.NRGBA{A: 255}
-									btn.CornerRadius = unit.Dp(4)
-									btn.Inset = layout.Inset{Top: unit.Dp(8), Bottom: unit.Dp(8), Left: unit.Dp(20), Right: unit.Dp(20)}
-									return btn.Layout(gtx)
+									return layout.Inset{Left: unit.Dp(6)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+										btn := material.Button(th, &f.BrowseBtn, "Browse")
+										btn.Background = InputBg
+										btn.Color = TextColor
+										btn.CornerRadius = unit.Dp(4)
+										btn.Inset = layout.Inset{Top: unit.Dp(8), Bottom: unit.Dp(8), Left: unit.Dp(12), Right: unit.Dp(12)}
+										return btn.Layout(gtx)
+									})
 								}),
 							)
+						})
+					}),
+					// Send button
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return layout.Inset{Top: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+							btn := material.Button(th, &f.SendBtn, "Send")
+							btn.Background = AccentColor
+							btn.Color = color.NRGBA{A: 255}
+							btn.CornerRadius = unit.Dp(4)
+							btn.Inset = layout.Inset{Top: unit.Dp(10), Bottom: unit.Dp(10), Left: unit.Dp(20), Right: unit.Dp(20)}
+							return btn.Layout(gtx)
 						})
 					}),
 					// Error

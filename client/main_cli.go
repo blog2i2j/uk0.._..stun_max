@@ -196,6 +196,14 @@ func consumeEvents() {
 			if le, ok := evt.Data.(core.LogEvent); ok {
 				notify(cRed, "VPN error: %s", le.Message)
 			}
+		case core.EventAutoHopEstablished:
+			if le, ok := evt.Data.(core.LogEvent); ok {
+				notify(cGreen, "%s", le.Message)
+			}
+		case core.EventAutoHopFailed:
+			if le, ok := evt.Data.(core.LogEvent); ok {
+				notify(cYellow, "%s", le.Message)
+			}
 		case core.EventLog:
 			if le, ok := evt.Data.(core.LogEvent); ok {
 				switch le.Level {
@@ -483,8 +491,15 @@ func printPeers() {
 			case "connecting":
 				statusColor = cCyan
 			default:
-				mode = "RELAY"
-				statusColor = cYellow
+				// Check if auto-hop is available
+				fwdMode := client.GetPeerForwardMode(p.ID)
+				if fwdMode == "HOP" {
+					mode = "HOP"
+					statusColor = cCyan
+				} else {
+					mode = "RELAY"
+					statusColor = cYellow
+				}
 			}
 		}
 

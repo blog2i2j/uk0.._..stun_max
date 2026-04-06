@@ -1,4 +1,4 @@
-//go:build linux
+//go:build linux && !android
 
 package core
 
@@ -200,3 +200,6 @@ func checkForwardingStatus() string {
 	out, _ := exec.Command("sysctl", "net.ipv4.ip_forward").CombinedOutput()
 	return strings.TrimSpace(string(out))
 }
+
+// stopPlatformVPN is a no-op on Linux.
+func stopPlatformVPN() {}
