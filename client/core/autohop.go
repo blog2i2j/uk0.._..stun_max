@@ -88,7 +88,7 @@ func (c *Client) findAutoHopCandidate(targetPeerID string) string {
 
 		// Score: prefer encrypted channel, then lower PunchFails
 		score := 100
-		if pc.Crypto != nil && pc.Crypto.Encrypted {
+		if pc.Crypto != nil && pc.Crypto.IsEncrypted() {
 			score += 50
 		}
 		score -= pc.PunchFails

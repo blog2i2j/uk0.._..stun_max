@@ -1,5 +1,63 @@
 # CHANGELOG
 
+## 2026-04-07 - Crypto Upgrade + NAT Diagnostic Enhancement
+
+### Crypto: AES-256-GCM → XChaCha20-Poly1305
+- **Thread-safe encryption** — replaced `cipher.AEAD` (AES-GCM) with `chacha20poly1305.NewX()`, explicitly safe for concurrent Seal/Open
+- **Removed dead code** — `nonceMu sync.Mutex` declared but unused (nextNonce used atomic), removed unused `EncryptTo` method
+- **Race condition fix** — `Encrypted` public field replaced with `IsEncrypted()` method protected by `sync.RWMutex`
+- **24-byte nonce** — eliminates counter collision risk (was 12-byte), random start counter per session
+- **ARM performance** — XChaCha20 is faster than AES-GCM on devices without AES-NI (Android, older ARM)
+- **Dependency** — added `golang.org/x/crypto/chacha20poly1305`
+
+### NAT Diagnostic Tool (natcheck) — Full Rewrite
+- **6 comprehensive tests**: STUN reachability, port allocation pattern, filtering behavior, hairpin NAT, binding lifetime, port prediction accuracy
+- **Scoring system** — 0-100 score with visual progress bar
+- **Difficulty rating** — ★☆☆☆☆ to ★★★★★ with Easy/Medium/Hard/Very Hard/Impossible labels
+- **STUN Max strategy display** — shows which hole punch phases will be used (rapid burst, birthday attack, port prediction, relay fallback)
+- **Peer compatibility matrix** — detailed table showing P2P feasibility with each NAT type + notes
+- **Latency analysis** — min/avg/max/jitter with color-coded output
+- **NAT type explanation** — lists all 7 NAT types with current type highlighted, descriptions, and P2P implications
+- **More STUN servers** — 7 servers (Cloudflare, Miwifi, Bilibili, Google ×3, Syncthing)
+- **5-sample port analysis** — increased from 3 samples for more accurate pattern detection
+- **`--fast` flag** — skip binding lifetime test for quicker results
+- **Beautiful console output** — box-drawing borders, color-coded sections, spinner animations
+
+## 2026-04-06 - Android Support + Auto-Hop Relay
+
+### Android APK Support
+- **Android platform files** — `tun_config_android.go` (TUN via VpnService fd), `files_picker_android.go` (stub)
+- **VpnService Java layer** — `StunMaxVpnService.java` + `GoBridge.java` for TUN fd and socket protection
+- **Build automation** — `android/build-apk.sh` script, `gogio` integration in `build.sh`
+- **GitHub Actions** — `build-android.yml` (standalone) + `build-release.yml` (full multi-platform with Android)
+- **Build tag fix** — `tun_config_linux.go` now uses `//go:build linux && !android` to avoid redeclaration
+- **File picker split** — `files.go` refactored: `openFilePicker()` in `files_picker_desktop.go` (dialog) / `files_picker_android.go` (stub)
+
+## 2026-04-06 - Auto-Hop Relay: Automatic P2P Route Discovery
+
+### Auto-Hop Feature
+- **Automatic hop discovery** — when direct P2P hole punch fails, automatically find an intermediate peer who has P2P connections to both endpoints
+- **P2P connectivity map broadcast** — each peer periodically shares its direct P2P connection list with the room (every 15s and on hole punch success)
+- **Smart candidate selection** — prefers encrypted channels and peers with fewer punch failures
+- **Transparent forwarding** — `StartForward` automatically uses `StartHopForward` when a hop candidate is available; no user action needed
+- **Priority chain**: Direct P2P → Auto-Hop → Server Relay (WebSocket)
+
+### Security
+- **Allow Hop Relay** toggle in Settings — controls whether this peer allows others to route through its P2P connections (default: on)
+- Auto-initiated hops use separate permission (`allowHopRelay`) from manual hops (`allowForward`)
+
+### UI/CLI
+- **HOP badge** — cyan-colored badge in peers list and forwards panel when connection uses auto-hop
+- CLI shows "HOP" mode in `peers` command output
+- New events: `EventAutoHopEstablished`, `EventAutoHopFailed`
+
+### Internal
+- New file: `client/core/autohop.go` — broadcastP2PMap, handleP2PMap, findAutoHopCandidate, tryAutoHop, cleanupPeerP2PMap
+- New wire message: `p2p_map` (relay_data type)
+- `HopForwardRequest.Auto` field distinguishes auto vs manual hops
+- P2P maps cleaned up on peer disconnect
+- No server-side changes required
+
 ## 2026-04-05 - Security Settings + Performance Tuning + Stability Fixes
 
 ### Security Settings

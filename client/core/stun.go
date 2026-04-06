@@ -482,7 +482,7 @@ func (c *Client) handleKeyExchange(peerID string, peerPubKey []byte, addr *net.U
 		pc.Crypto = crypto
 	}
 
-	if pc.Crypto.Encrypted {
+	if pc.Crypto.IsEncrypted() {
 		c.peerConnsMu.Unlock()
 		return // already established
 	}
@@ -494,7 +494,7 @@ func (c *Client) handleKeyExchange(peerID string, peerPubKey []byte, addr *net.U
 	}
 	c.peerConnsMu.Unlock()
 
-	c.emit(EventLog, LogEvent{Level: "info", Message: fmt.Sprintf("Encrypted channel established with %s (X25519+AES-256-GCM)", shortID(peerID))})
+	c.emit(EventLog, LogEvent{Level: "info", Message: fmt.Sprintf("Encrypted channel established with %s (X25519+XChaCha20-Poly1305)", shortID(peerID))})
 
 	// Send KEY_ACK with our public key
 	c.peerConnsMu.RLock()
@@ -847,7 +847,7 @@ func (c *Client) handleEncryptedUDPData(tunnelID string, encrypted []byte, addr 
 		c.peerConnsMu.RUnlock()
 	}
 
-	if crypto != nil && crypto.Encrypted {
+	if crypto != nil && crypto.IsEncrypted() {
 		plaintext, err := crypto.Decrypt(encrypted)
 		if err == nil {
 			c.handleUDPTunnelData(tunnelID, plaintext)

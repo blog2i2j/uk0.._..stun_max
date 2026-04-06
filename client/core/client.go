@@ -606,7 +606,7 @@ func (c *Client) sendRelay(to string, innerType string, innerPayload interface{}
 		c.peerConnsMu.RLock()
 		pc, ok := c.peerConns[to]
 		c.peerConnsMu.RUnlock()
-		if ok && pc.Crypto != nil && pc.Crypto.Encrypted {
+		if ok && pc.Crypto != nil && pc.Crypto.IsEncrypted() {
 			encrypted, err := pc.Crypto.Encrypt(envelope)
 			if err == nil {
 				// Wrap in encrypted envelope
@@ -1099,7 +1099,7 @@ func (c *Client) handleRelayData(msg Message) {
 		c.peerConnsMu.RLock()
 		pc, ok := c.peerConns[msg.From]
 		c.peerConnsMu.RUnlock()
-		if !ok || pc.Crypto == nil || !pc.Crypto.Encrypted {
+		if !ok || pc.Crypto == nil || !pc.Crypto.IsEncrypted() {
 			return // can't decrypt without key
 		}
 		plaintext, err := pc.Crypto.Decrypt(ciphertext)
