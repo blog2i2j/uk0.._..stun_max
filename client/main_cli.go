@@ -461,7 +461,7 @@ func runCLI() {
 func printPeers() {
 	peers := client.Peers()
 	fmt.Printf("\n%sPeers in room:%s\n", cBold, cReset)
-	fmt.Printf("  %-16s %-14s %-10s %-12s\n", "ID", "NAME", "MODE", "STATUS")
+	fmt.Printf("  %-16s %-14s %-6s %-10s %-12s\n", "ID", "NAME", "NAT", "MODE", "STATUS")
 	for _, p := range peers {
 		id := p.ID
 		if len(id) > 14 {
@@ -479,10 +479,20 @@ func printPeers() {
 		statusLabel := p.Status
 		statusColor := cGray
 
+		// NAT type display
+		natType := p.NATType
+		natColor := cGray
+
 		if p.ID == client.MyID {
 			statusLabel = "YOU"
 			statusColor = cCyan
+			stun := client.StunStatus()
+			natType = stun.NATType
 		} else {
+			peerNAT := client.PeerNATType(p.ID)
+			if peerNAT != "" {
+				natType = peerNAT
+			}
 			mode = client.PeerMode(p.ID)
 			switch mode {
 			case "direct":
@@ -491,7 +501,6 @@ func printPeers() {
 			case "connecting":
 				statusColor = cCyan
 			default:
-				// Check if auto-hop is available
 				fwdMode := client.GetPeerForwardMode(p.ID)
 				if fwdMode == "HOP" {
 					mode = "HOP"
@@ -503,7 +512,22 @@ func printPeers() {
 			}
 		}
 
-		fmt.Printf("  %-16s %-14s %-10s %s%-12s%s\n", id, nameDisplay, mode, statusColor, statusLabel, cReset)
+		if natType == "" {
+			natType = "-"
+		}
+		switch natType {
+		case "NAT1":
+			natColor = cGreen
+		case "NAT2":
+			natColor = cGreen
+		case "NAT3":
+			natColor = cYellow
+		case "NAT4":
+			natColor = cRed
+		}
+
+		fmt.Printf("  %-16s %-14s %s%-6s%s %-10s %s%-12s%s\n",
+			id, nameDisplay, natColor, natType, cReset, mode, statusColor, statusLabel, cReset)
 	}
 	fmt.Println()
 }

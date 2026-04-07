@@ -54,12 +54,20 @@ func (p *PeersPanel) Layout(gtx layout.Context, th *material.Theme, a *App) layo
 		if isSelf {
 			name = name + " (you)"
 		}
+		natType := peer.NATType
+		if natType == "" && a.Client != nil && !isSelf {
+			natType = a.Client.PeerNATType(peer.ID)
+		}
+		if isSelf && a.Client != nil {
+			natType = a.Client.StunStatus().NATType
+		}
 		peers = append(peers, peerRow{
 			ID:       peer.ID,
 			Name:     name,
 			Status:   peer.Status,
 			Mode:     mode,
 			Endpoint: peer.Endpoint,
+			NATType:  natType,
 		})
 	}
 	a.mu.Unlock()
@@ -96,6 +104,7 @@ type peerRow struct {
 	Status   string
 	Mode     string
 	Endpoint string
+	NATType  string
 }
 
 func layoutPeerCard(gtx layout.Context, th *material.Theme, peer peerRow) layout.Dimensions {
@@ -131,7 +140,19 @@ func layoutPeerCard(gtx layout.Context, th *material.Theme, peer peerRow) layout
 						)
 					}),
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return layoutBadge(gtx, th, peer.Mode)
+						return layout.Flex{Axis: layout.Horizontal, Spacing: layout.SpaceStart}.Layout(gtx,
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								if peer.NATType == "" {
+									return layout.Dimensions{}
+								}
+								return layout.Inset{Right: unit.Dp(6)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+									return layoutNATBadge(gtx, th, peer.NATType)
+								})
+							}),
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								return layoutBadge(gtx, th, peer.Mode)
+							}),
+						)
 					}),
 				)
 			})
@@ -169,6 +190,37 @@ func layoutBadge(gtx layout.Context, th *material.Theme, mode string) layout.Dim
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
 			return layout.Inset{Top: unit.Dp(4), Bottom: unit.Dp(4), Left: unit.Dp(10), Right: unit.Dp(10)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				lbl := material.Caption(th, label)
+				lbl.Color = color.NRGBA{A: 255}
+				return lbl.Layout(gtx)
+			})
+		}),
+	)
+}
+
+func layoutNATBadge(gtx layout.Context, th *material.Theme, natType string) layout.Dimensions {
+	var bg color.NRGBA
+	switch natType {
+	case "NAT1":
+		bg = SuccessColor // green
+	case "NAT2":
+		bg = color.NRGBA{R: 0x4C, G: 0xAF, B: 0x50, A: 0xFF} // lighter green
+	case "NAT3":
+		bg = WarningColor // orange/yellow
+	case "NAT4":
+		bg = color.NRGBA{R: 0xF4, G: 0x43, B: 0x36, A: 0xFF} // red
+	default:
+		bg = DimColor
+	}
+
+	return layout.Stack{Alignment: layout.Center}.Layout(gtx,
+		layout.Expanded(func(gtx layout.Context) layout.Dimensions {
+			rr := clip.UniformRRect(image.Rect(0, 0, gtx.Constraints.Min.X, gtx.Constraints.Min.Y), gtx.Dp(unit.Dp(4)))
+			paint.FillShape(gtx.Ops, bg, rr.Op(gtx.Ops))
+			return layout.Dimensions{Size: image.Pt(gtx.Constraints.Min.X, gtx.Constraints.Min.Y)}
+		}),
+		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Top: unit.Dp(4), Bottom: unit.Dp(4), Left: unit.Dp(8), Right: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				lbl := material.Caption(th, natType)
 				lbl.Color = color.NRGBA{A: 255}
 				return lbl.Layout(gtx)
 			})

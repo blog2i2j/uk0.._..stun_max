@@ -47,6 +47,7 @@ type Client struct {
 	peerConnsMu sync.RWMutex
 	udpConn     *net.UDPConn
 	publicAddr  string
+	natType     string // our detected NAT type: NAT1-NAT4
 	verbose     bool
 
 	// Access control
@@ -181,8 +182,15 @@ func (c *Client) emit(t EventType, data interface{}) {
 
 // Connect dials the WebSocket server and reads the welcome message.
 func (c *Client) Connect() error {
+	// Initialize proxy bypass — detect physical interface for socket binding
+	initProxyBypass()
+	if physicalIP != nil {
+		c.emit(EventLog, LogEvent{Level: "info", Message: formatBypassInfo()})
+	}
+
 	dialer := websocket.Dialer{
 		HandshakeTimeout: 10 * time.Second,
+		NetDialContext:   bypassDialer(10 * time.Second).DialContext,
 	}
 	// Pass machine ID as query parameter so server uses it as client ID
 	serverURL := c.Config.ServerURL
@@ -448,6 +456,7 @@ func (c *Client) StunStatus() StunInfo {
 	info := StunInfo{
 		PublicAddr: c.publicAddr,
 		Enabled:    c.publicAddr != "",
+		NATType:    c.natType,
 		PeerConns:  make(map[string]string),
 	}
 	c.peerConnsMu.RLock()
@@ -544,6 +553,24 @@ func (c *Client) PeerMode(peerID string) string {
 		return pc.Mode
 	}
 	return "-"
+}
+
+// PeerNATType returns the detected NAT type for a given peer.
+func (c *Client) PeerNATType(peerID string) string {
+	c.peerConnsMu.RLock()
+	defer c.peerConnsMu.RUnlock()
+	if pc, ok := c.peerConns[peerID]; ok && pc.NATType != "" {
+		return pc.NATType
+	}
+	// Fallback: check PeerInfo from server
+	c.peersMu.RLock()
+	defer c.peersMu.RUnlock()
+	for _, p := range c.peers {
+		if p.ID == peerID && p.NATType != "" {
+			return p.NATType
+		}
+	}
+	return ""
 }
 
 // GetPeerForwardMode returns the effective forward mode for a peer (P2P, HOP, or RELAY).

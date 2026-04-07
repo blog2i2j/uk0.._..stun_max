@@ -27,6 +27,7 @@ type Client struct {
 	name     string            // friendly name from CLI
 	services []string          // advertised host:port list
 	endpoint string            // STUN-discovered public UDP endpoint
+	natType  string            // NAT type: NAT1, NAT2, NAT3, NAT4
 	features map[string]string // active features reported by client
 }
 
@@ -127,14 +128,18 @@ func (c *Client) handleMessage(msg Message) {
 		c.forwardToTarget(msg)
 
 	case "stun_info":
-		// Store sender's STUN endpoint
+		// Store sender's STUN endpoint and NAT type
 		if msg.Payload != nil {
 			var info struct {
-				Addr string `json:"addr"`
+				Addr    string `json:"addr"`
+				NATType string `json:"nat_type"`
 			}
 			json.Unmarshal(msg.Payload, &info)
 			if info.Addr != "" {
 				c.endpoint = info.Addr
+			}
+			if info.NATType != "" {
+				c.natType = info.NATType
 			}
 		}
 		if msg.To == "" {

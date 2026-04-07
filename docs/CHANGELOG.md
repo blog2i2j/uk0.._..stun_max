@@ -1,5 +1,32 @@
 # CHANGELOG
 
+## 2026-04-07 - NAT Type Detection + Proxy Bypass + Adaptive Hole Punch
+
+### NAT Type Detection
+- **Auto-detect on connect** — queries multiple STUN servers after discovery, classifies NAT1 (Open/Full Cone), NAT2 (Restricted Cone), NAT3 (Port Restricted), NAT4 (Symmetric)
+- **NAT type in stun_info** — peers exchange NAT types via signaling, stored in PeerConn and broadcast in peer_list
+- **Server-side storage** — server stores and broadcasts each peer's NAT type
+- **GUI display** — NAT type badge on each peer card (green NAT1/2, yellow NAT3, red NAT4)
+- **CLI display** — `peers` command shows NAT column with color-coded types
+
+### Adaptive Hole Punching (NAT3/NAT4)
+- **NAT-aware burst sizing** — Phase 1 burst: 20 packets (easy NAT), 30 (NAT3), 40 (NAT4)
+- **Scaled birthday attack** — 0 sockets (NAT1/2), 8 (NAT3+NAT3), 12 (NAT3+NAT4), 16 (NAT4+NAT4)
+- **Conditional port prediction** — Phase 3 only triggers when Symmetric NAT detected; ±10 for NAT4, ±20 for NAT4+NAT4
+- **Strategy selection** — each phase runs only when NAT types warrant it, reducing unnecessary traffic
+
+### Proxy Bypass (TUN Proxy Auto-Detection)
+- **Physical interface detection** — auto-detects real NIC (en0/eth0/wlan0), skips TUN/utun/wintun/docker/wireguard interfaces
+- **Socket binding** — all WebSocket, STUN, and P2P UDP sockets bound to physical interface IP
+- **CGNAT filter** — skips 198.18.0.0/15 addresses (commonly used by Clash/V2Ray TUN mode)
+- **Bypass logging** — shows detected physical IP on connect for diagnostics
+- **Cross-platform** — works on macOS, Linux, Windows; Android uses VpnService.protect
+
+### Standalone Punch Test Tool
+- `tools/punchtest/` — standalone CLI for testing NAT3/NAT4 hole punching between peers
+- Connects to signal server, discovers peers, runs 3-phase punch with detailed results
+- Reports success/failure per peer, timing, phase attribution, and analysis
+
 ## 2026-04-07 - Crypto Upgrade + NAT Diagnostic Enhancement
 
 ### Crypto: AES-256-GCM → XChaCha20-Poly1305

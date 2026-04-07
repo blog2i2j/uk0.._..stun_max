@@ -24,6 +24,7 @@ type PeerInfo struct {
 	Name     string            `json:"name,omitempty"`     // friendly name from CLI
 	Services []string          `json:"services,omitempty"` // advertised host:port list
 	Endpoint string            `json:"endpoint,omitempty"` // STUN-discovered public UDP endpoint
+	NATType  string            `json:"nat_type,omitempty"` // NAT type: NAT1, NAT2, NAT3, NAT4
 	Features map[string]string `json:"features,omitempty"` // active features: vpn, forwards, files, etc.
 }
 
@@ -250,6 +251,7 @@ func (r *Room) getPeerList() []PeerInfo {
 			Name:     c.name,
 			Services: c.services,
 			Endpoint: c.endpoint,
+			NATType:  c.natType,
 			Features: c.features,
 		})
 	}

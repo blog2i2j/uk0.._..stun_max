@@ -31,7 +31,7 @@ func stunDiscover(stunServer string) (publicAddr string, localPort int, conn *ne
 		return "", 0, nil, fmt.Errorf("resolve STUN server: %w", err)
 	}
 
-	conn, err = net.ListenUDP("udp4", nil)
+	conn, err = bypassListenUDP()
 	if err != nil {
 		return "", 0, nil, fmt.Errorf("listen UDP: %w", err)
 	}
@@ -185,6 +185,7 @@ func tunnelIDFromBytes(b []byte) string {
 
 // DiscoverSTUN tries each STUN server until one succeeds.
 func (c *Client) DiscoverSTUN(servers []string) error {
+	var firstSrv string
 	for _, srv := range servers {
 		srv = strings.TrimSpace(srv)
 		if srv == "" {
@@ -198,7 +199,11 @@ func (c *Client) DiscoverSTUN(servers []string) error {
 		}
 		c.publicAddr = publicAddr
 		c.udpConn = udpConn
+		firstSrv = srv
 		c.emit(EventStunDiscovered, LogEvent{Level: "info", Message: fmt.Sprintf("STUN: public endpoint %s (via %s)", publicAddr, srv)})
+
+		// Detect NAT type in background (non-blocking)
+		go c.detectNATType(publicAddr, firstSrv, servers)
 
 		// Start UDP read loop
 		c.wg.Add(1)
@@ -219,6 +224,125 @@ func (c *Client) DiscoverSTUN(servers []string) error {
 	return fmt.Errorf("all STUN servers failed")
 }
 
+// detectNATType determines our NAT type by querying multiple STUN servers.
+func (c *Client) detectNATType(publicAddr, primarySrv string, servers []string) {
+	localIP := getLocalIP()
+	pubIP, _, _ := net.SplitHostPort(publicAddr)
+
+	// Check if we're on the public internet (no NAT)
+	if pubIP == localIP {
+		c.natType = NATOpen
+		c.emit(EventLog, LogEvent{Level: "info", Message: "NAT type: NAT1 (Open Internet)"})
+		c.sendStunInfo("") // re-broadcast with NAT type
+		return
+	}
+
+	// Query a second STUN server from a fresh socket to check port consistency
+	var secondAddr string
+	for _, srv := range servers {
+		srv = strings.TrimSpace(srv)
+		if srv == "" || srv == primarySrv {
+			continue
+		}
+		conn, err := bypassListenUDP()
+		if err != nil {
+			continue
+		}
+		result := stunQueryFresh(conn, srv)
+		conn.Close()
+		if result != "" {
+			secondAddr = result
+			break
+		}
+	}
+
+	if secondAddr == "" {
+		// Can't determine — assume cone NAT
+		c.natType = NATRestrictedCone
+		c.emit(EventLog, LogEvent{Level: "info", Message: "NAT type: NAT2 (Restricted Cone, estimated)"})
+		c.sendStunInfo("")
+		return
+	}
+
+	// Compare ports from same local socket to different servers
+	// Query primary and secondary from the SAME socket
+	testConn, err := bypassListenUDP()
+	if err != nil {
+		c.natType = NATRestrictedCone
+		c.sendStunInfo("")
+		return
+	}
+	defer testConn.Close()
+
+	addr1 := stunQueryFresh(testConn, primarySrv)
+	addr2 := stunQueryFresh(testConn, servers[len(servers)-1])
+
+	if addr1 == "" || addr2 == "" {
+		c.natType = NATRestrictedCone
+		c.emit(EventLog, LogEvent{Level: "info", Message: "NAT type: NAT2 (Restricted Cone, estimated)"})
+		c.sendStunInfo("")
+		return
+	}
+
+	_, port1Str, _ := net.SplitHostPort(addr1)
+	_, port2Str, _ := net.SplitHostPort(addr2)
+
+	if port1Str != port2Str {
+		// Port changes per destination → Symmetric NAT
+		c.natType = NATSymmetric
+		c.emit(EventLog, LogEvent{Level: "info", Message: fmt.Sprintf("NAT type: NAT4 (Symmetric) — port varies per destination (%s vs %s)", port1Str, port2Str)})
+	} else {
+		// Port consistent — Cone NAT (NAT1-3)
+		// Distinguish between NAT2 and NAT3 requires a multi-address STUN server
+		// which we don't control. Default to NAT3 (more conservative).
+		c.natType = NATPortRestricted
+		c.emit(EventLog, LogEvent{Level: "info", Message: "NAT type: NAT3 (Port Restricted Cone)"})
+	}
+
+	c.sendStunInfo("") // re-broadcast with NAT type
+}
+
+// stunQueryFresh sends a STUN binding request to a server from the given conn.
+func stunQueryFresh(conn *net.UDPConn, server string) string {
+	serverAddr, err := net.ResolveUDPAddr("udp4", server)
+	if err != nil {
+		return ""
+	}
+
+	req := make([]byte, StunHeaderSize)
+	binary.BigEndian.PutUint16(req[0:2], StunBindingRequest)
+	binary.BigEndian.PutUint16(req[2:4], 0)
+	binary.BigEndian.PutUint32(req[4:8], StunMagicCookie)
+	txID := make([]byte, 12)
+	rand.Read(txID)
+	copy(req[8:20], txID)
+
+	conn.SetWriteDeadline(time.Now().Add(2 * time.Second))
+	if _, err := conn.WriteToUDP(req, serverAddr); err != nil {
+		return ""
+	}
+	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	buf := make([]byte, 1024)
+	n, _, err := conn.ReadFromUDP(buf)
+	if err != nil || n < StunHeaderSize {
+		return ""
+	}
+	conn.SetReadDeadline(time.Time{})
+	conn.SetWriteDeadline(time.Time{})
+
+	resp := buf[:n]
+	if binary.BigEndian.Uint16(resp[0:2]) != 0x0101 || !bytes.Equal(resp[8:20], txID) {
+		return ""
+	}
+	msgLen := binary.BigEndian.Uint16(resp[2:4])
+	attrs := resp[StunHeaderSize : StunHeaderSize+int(msgLen)]
+	addr, err := parseXorMappedAddress(attrs)
+	if err != nil {
+		return ""
+	}
+	return addr
+}
+
 func (c *Client) sendStunInfo(to string) {
 	if c.publicAddr == "" {
 		return
@@ -232,10 +356,14 @@ func (c *Client) sendStunInfo(to string) {
 		localPort := udp.LocalAddr().(*net.UDPAddr).Port
 		localUDP = fmt.Sprintf("%s:%d", localAddr, localPort)
 	}
-	payload, _ := json.Marshal(map[string]string{
+	info := map[string]string{
 		"addr":  c.publicAddr,
 		"local": localUDP,
-	})
+	}
+	if c.natType != "" {
+		info["nat_type"] = c.natType
+	}
+	payload, _ := json.Marshal(info)
 	c.sendMsg(Message{
 		Type:    "stun_info",
 		To:      to,
@@ -258,8 +386,9 @@ func (c *Client) handleStunInfo(msg Message) {
 		return
 	}
 	var info struct {
-		Addr  string `json:"addr"`
-		Local string `json:"local"`
+		Addr    string `json:"addr"`
+		Local   string `json:"local"`
+		NATType string `json:"nat_type"`
 	}
 	if err := json.Unmarshal(msg.Payload, &info); err != nil || info.Addr == "" {
 		return
@@ -292,6 +421,11 @@ func (c *Client) handleStunInfo(msg Message) {
 		c.peerConns[msg.From] = pc
 	}
 
+	// Store peer's NAT type
+	if info.NATType != "" {
+		pc.NATType = info.NATType
+	}
+
 	// CRITICAL: don't overwrite UDPAddr if peer is already direct and working.
 	// Changing addr mid-stream breaks crypto lookup and causes tunnel flaps.
 	if pc.Mode == "direct" {
@@ -305,7 +439,11 @@ func (c *Client) handleStunInfo(msg Message) {
 	if isLAN {
 		c.emit(EventLog, LogEvent{Level: "info", Message: fmt.Sprintf("LAN peer detected: %s → using local address %s", shortID(msg.From), targetAddr)})
 	} else if c.verbose {
-		c.emit(EventLog, LogEvent{Level: "info", Message: fmt.Sprintf("Received STUN endpoint from %s: %s", shortID(msg.From), info.Addr)})
+		natStr := ""
+		if info.NATType != "" {
+			natStr = " [" + info.NATType + "]"
+		}
+		c.emit(EventLog, LogEvent{Level: "info", Message: fmt.Sprintf("Received STUN endpoint from %s: %s%s", shortID(msg.From), info.Addr, natStr)})
 	}
 
 	// Send our stun_info back if we have one
@@ -340,14 +478,33 @@ func (c *Client) attemptHolePunch(peerID string, isLAN bool) {
 			pc.Crypto = crypto
 		}
 	}
+	peerNAT := pc.NATType
 	c.peerConnsMu.Unlock()
 
 	addr := pc.UDPAddr
 	myID := []byte(c.MyID)
+	myNAT := c.natType
 
-	// Phase 1: Rapid burst — 20 packets in 500ms from main socket
+	// Determine adaptive strategy based on both sides' NAT types
+	// NAT1+NAT1 → Phase 1 only
+	// NAT1/2+NAT3 → Phase 1 + small birthday
+	// NAT3+NAT3 → Phase 1 + birthday attack
+	// NAT3+NAT4 or NAT4+NAT4 → all phases, max aggression
+	hardNAT := peerNAT == NATSymmetric || myNAT == NATSymmetric
+	bothHard := peerNAT == NATSymmetric && myNAT == NATSymmetric
+	mediumNAT := peerNAT == NATPortRestricted || myNAT == NATPortRestricted
+
+	// Phase 1 burst count: 20 for easy, 30 for medium, 40 for hard
+	burstCount := 20
+	if hardNAT {
+		burstCount = 40
+	} else if mediumNAT {
+		burstCount = 30
+	}
+
+	// Phase 1: Rapid burst from main socket
 	punch := append([]byte("PUNCH:"), myID...)
-	for i := 0; i < 20; i++ {
+	for i := 0; i < burstCount; i++ {
 		select {
 		case <-c.done:
 			return
@@ -357,55 +514,77 @@ func (c *Client) attemptHolePunch(peerID string, isLAN bool) {
 		time.Sleep(25 * time.Millisecond)
 	}
 
-	// Phase 2 & 3: only for WAN (Birthday Attack + port prediction).
-	// Skip for LAN — no NAT to punch through, and extra sockets cause ICMP errors.
+	// Skip Phase 2 & 3 for LAN — no NAT to punch through
 	if isLAN {
 		return
 	}
 
-	// Phase 2: Multi-socket parallel punch (Birthday Attack style)
-	// Open 8 extra sockets and punch from each — increases probability
-	// of hitting the right NAT mapping for Symmetric NATs
-	var extraConns []*net.UDPConn
-	for i := 0; i < 8; i++ {
-		conn, err := net.ListenUDP("udp4", nil)
-		if err != nil {
-			continue
+	// Phase 2: Multi-socket parallel punch (Birthday Attack)
+	// Scale sockets based on NAT difficulty
+	birthdaySockets := 0
+	birthdayPackets := 5
+	if bothHard {
+		// NAT4+NAT4: maximum aggression
+		birthdaySockets = 16
+		birthdayPackets = 8
+	} else if hardNAT {
+		// NAT3+NAT4 or NAT4+easy: aggressive
+		birthdaySockets = 12
+		birthdayPackets = 6
+	} else if mediumNAT {
+		// NAT3+NAT3: moderate
+		birthdaySockets = 8
+		birthdayPackets = 5
+	}
+	// NAT1/NAT2 both sides: skip birthday attack
+
+	if birthdaySockets > 0 {
+		var extraConns []*net.UDPConn
+		for i := 0; i < birthdaySockets; i++ {
+			conn, err := bypassListenUDP()
+			if err != nil {
+				continue
+			}
+			extraConns = append(extraConns, conn)
 		}
-		extraConns = append(extraConns, conn)
+
+		if len(extraConns) > 0 {
+			var wg sync.WaitGroup
+			for _, conn := range extraConns {
+				wg.Add(1)
+				go func(c2 *net.UDPConn) {
+					defer wg.Done()
+					for j := 0; j < birthdayPackets; j++ {
+						c2.WriteToUDP(punch, addr)
+						time.Sleep(50 * time.Millisecond)
+					}
+				}(conn)
+			}
+			wg.Wait()
+			for _, conn := range extraConns {
+				conn.Close()
+			}
+		}
 	}
 
-	if len(extraConns) > 0 {
-		var wg sync.WaitGroup
-		for _, conn := range extraConns {
-			wg.Add(1)
-			go func(c2 *net.UDPConn) {
-				defer wg.Done()
-				for j := 0; j < 5; j++ {
-					c2.WriteToUDP(punch, addr)
-					time.Sleep(50 * time.Millisecond)
-				}
-			}(conn)
+	// Phase 3: Port prediction — only when at least one side is Symmetric (NAT4)
+	if hardNAT {
+		portRange := 10
+		if bothHard {
+			portRange = 20 // wider range for NAT4+NAT4
 		}
-		wg.Wait()
-		for _, conn := range extraConns {
-			conn.Close()
+		basePort := addr.Port
+		for delta := -portRange; delta <= portRange; delta++ {
+			if delta == 0 {
+				continue
+			}
+			predictedPort := basePort + delta
+			if predictedPort <= 0 || predictedPort > 65535 {
+				continue
+			}
+			predictedAddr := &net.UDPAddr{IP: addr.IP, Port: predictedPort}
+			udp.WriteToUDP(punch, predictedAddr)
 		}
-	}
-
-	// Phase 3: Port prediction for Easy Symmetric NAT
-	// Try ports around the known port ±10
-	basePort := addr.Port
-	for delta := -10; delta <= 10; delta++ {
-		if delta == 0 {
-			continue
-		}
-		predictedPort := basePort + delta
-		if predictedPort <= 0 || predictedPort > 65535 {
-			continue
-		}
-		predictedAddr := &net.UDPAddr{IP: addr.IP, Port: predictedPort}
-		udp.WriteToUDP(punch, predictedAddr)
 	}
 }
 
@@ -1007,16 +1186,6 @@ func (c *Client) startRetryLoop() {
 			}
 		}
 	}
-}
-
-// getLocalIP returns the preferred outbound local IP address.
-func getLocalIP() string {
-	conn, err := net.Dial("udp4", "8.8.8.8:80")
-	if err != nil {
-		return ""
-	}
-	defer conn.Close()
-	return conn.LocalAddr().(*net.UDPAddr).IP.String()
 }
 
 // directTCPReadLoop reads framed tunnel data from a direct TCP connection.

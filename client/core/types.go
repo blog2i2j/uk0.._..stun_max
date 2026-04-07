@@ -36,6 +36,16 @@ type Message struct {
 	Payload json.RawMessage `json:"payload,omitempty"`
 }
 
+// NAT type constants
+const (
+	NATUnknown         = ""
+	NATOpen            = "NAT1"  // Open Internet
+	NATFullCone        = "NAT1"  // Full Cone NAT
+	NATRestrictedCone  = "NAT2"  // Restricted Cone NAT
+	NATPortRestricted  = "NAT3"  // Port Restricted Cone NAT
+	NATSymmetric       = "NAT4"  // Symmetric NAT
+)
+
 // PeerInfo matches the server's PeerInfo struct
 type PeerInfo struct {
 	ID       string   `json:"id"`
@@ -43,6 +53,7 @@ type PeerInfo struct {
 	Name     string   `json:"name,omitempty"`
 	Services []string `json:"services,omitempty"`
 	Endpoint string   `json:"endpoint,omitempty"`
+	NATType  string   `json:"nat_type,omitempty"`
 }
 
 // PeerConn tracks per-peer connection state for hole punching.
@@ -57,6 +68,7 @@ type PeerConn struct {
 	Crypto     *PeerCrypto      // encryption state
 	AutoHopVia string           // if non-empty, this peer is reached via auto-hop through this peer
 	AutoHopID  string           // hop ID for the auto-hop bridge
+	NATType    string           // peer's NAT type: NAT1, NAT2, NAT3, NAT4
 }
 
 // TunnelOpen is sent to request opening a tunnel to a peer's local port.
@@ -333,5 +345,6 @@ type ForwardInfo struct {
 type StunInfo struct {
 	PublicAddr string
 	Enabled    bool
+	NATType    string            // our detected NAT type
 	PeerConns  map[string]string // peerID -> mode
 }
