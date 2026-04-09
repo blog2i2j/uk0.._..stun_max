@@ -74,6 +74,15 @@ fi
 
 ok "Release: ${VERSION}"
 
+# ─── Stop existing services before installing ─────────────────
+
+info "Stopping existing services..."
+systemctl stop stun-max 2>/dev/null || true
+systemctl stop stun-max-stun 2>/dev/null || true
+fuser -k ${PORT}/tcp 2>/dev/null || true
+fuser -k ${STUN_PORT}/udp 2>/dev/null || true
+sleep 1
+
 # ─── Download server zip ─────────────────────────────────────
 
 RELEASE_URL="https://github.com/${REPO}/releases/download/${VERSION}"
@@ -186,10 +195,6 @@ EOF
 
 info "Starting services..."
 systemctl daemon-reload
-systemctl stop stun-max stun-max-stun 2>/dev/null || true
-fuser -k ${PORT}/tcp 2>/dev/null || true
-fuser -k ${STUN_PORT}/udp 2>/dev/null || true
-sleep 1
 systemctl enable --now stun-max-stun 2>/dev/null
 sleep 1
 systemctl enable --now stun-max
