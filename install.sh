@@ -90,17 +90,23 @@ detect_china() {
 }
 
 # Available China GitHub proxies (tested in order, first working one wins)
+# Usage: ${proxy}https://github.com/user/repo/releases/download/tag/file
 CHINA_PROXIES=(
-    "https://ghfast.top/"
     "https://mirror.ghproxy.com/"
+    "https://ghfast.top/"
     "https://gh-proxy.com/"
     "https://ghproxy.net/"
 )
 
+# Test URL: a small known file on GitHub (README)
+TEST_URL="https://raw.githubusercontent.com/${REPO}/main/README.md"
+
 if detect_china; then
     info "Detected China network, testing GitHub proxies..."
     for proxy in "${CHINA_PROXIES[@]}"; do
-        if curl -fsSL --max-time 5 -o /dev/null "${proxy}https://github.com/${REPO}/releases" 2>/dev/null; then
+        # Test by downloading a small file through the proxy
+        HTTP_CODE=$(curl -fsSL --max-time 8 -o /dev/null -w "%{http_code}" "${proxy}${TEST_URL}" 2>/dev/null || echo "000")
+        if [ "$HTTP_CODE" = "200" ]; then
             GITHUB_PROXY="$proxy"
             ok "Using proxy: ${proxy}"
             break
