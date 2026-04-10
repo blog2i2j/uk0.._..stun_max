@@ -90,6 +90,9 @@ type Client struct {
 	// Server relay status
 	relayDisabled bool // true if server disabled relay for this room
 
+	// NAT port allocation model (for Symmetric NAT prediction)
+	portModel *portModel
+
 	// Peer leave debounce: delay "peer left" to handle brief disconnects
 	pendingLeaves   map[string]*time.Timer // name → cancel timer
 	pendingLeavesMu sync.Mutex
@@ -265,7 +268,7 @@ func (c *Client) Connect() error {
 // setupWSKeepAlive configures ping/pong handlers and starts a ping sender goroutine.
 // This keeps the WebSocket connection alive through NATs and load balancers.
 func (c *Client) setupWSKeepAlive() {
-	const pingPeriod = 30 * time.Second
+	const pingPeriod = 15 * time.Second
 
 	c.connMu.Lock()
 	conn := c.conn
@@ -594,6 +597,23 @@ func (c *Client) PeerNATType(peerID string) string {
 // GetPeerForwardMode returns the effective forward mode for a peer (P2P, HOP, or RELAY).
 func (c *Client) GetPeerForwardMode(peerID string) string {
 	return c.getForwardMode(peerID)
+}
+
+// isPeerForwardForceRelay checks if any forward to this peer has ForceRelay set.
+func (c *Client) isPeerForwardForceRelay(peerID string) bool {
+	c.forwardsMu.RLock()
+	defer c.forwardsMu.RUnlock()
+	for _, fwd := range c.forwards {
+		if fwd.PeerID == peerID {
+			fwd.Mu.Lock()
+			fr := fwd.ForceRelay
+			fwd.Mu.Unlock()
+			if fr {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // SetForwardMode: forceRelay=true forces relay even when P2P is available.

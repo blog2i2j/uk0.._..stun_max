@@ -8,7 +8,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	mrand "math/rand"
 	"net"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -342,17 +344,30 @@ func hasLocalIP(ip string) bool {
 	return false
 }
 
-// detectPortAllocation checks if the NAT allocates ports sequentially.
-// This determines whether port prediction is viable for symmetric NAT traversal.
+// NAT port allocation model (from p2p_punch.py 6-model classifier)
+type portModel struct {
+	Name      string  // global_counter, pool_pairs, sequential, random
+	DriftRate float64 // ports/second for global_counter
+	Delta     int     // step size for sequential
+	Anchor    int     // last observed port
+	AnchorAt  time.Time
+}
+
+// detectPortAllocation probes the NAT to classify port allocation behavior.
+// Uses 8 samples for better accuracy (inspired by p2p_punch.py model classifier).
 func (c *Client) detectPortAllocation(servers []string) {
 	if len(servers) == 0 {
 		return
 	}
 	bestSrv := servers[0]
 
-	// Take 3 samples from fresh sockets to the same server
-	var ports []int
-	for i := 0; i < 3; i++ {
+	type sample struct {
+		port int
+		at   time.Time
+	}
+	var samples []sample
+
+	for i := 0; i < 8; i++ {
 		conn, err := bypassListenUDP()
 		if err != nil {
 			continue
@@ -364,26 +379,98 @@ func (c *Client) detectPortAllocation(servers []string) {
 			p := 0
 			fmt.Sscanf(portStr, "%d", &p)
 			if p > 0 {
-				ports = append(ports, p)
+				samples = append(samples, sample{port: p, at: time.Now()})
 			}
 		}
-		time.Sleep(50 * time.Millisecond) // brief delay to avoid port reuse
+		time.Sleep(10 * time.Millisecond)
 	}
 
-	if len(ports) < 3 {
+	if len(samples) < 3 {
 		return
 	}
 
-	d1 := ports[1] - ports[0]
-	d2 := ports[2] - ports[1]
-
-	if d1 > 0 && d1 <= 10 && d1 == d2 {
-		c.emit(EventLog, LogEvent{Level: "info", Message: fmt.Sprintf(
-			"NAT4 port allocation: sequential (delta=%d) — port prediction viable", d1)})
-	} else {
-		c.emit(EventLog, LogEvent{Level: "info", Message: fmt.Sprintf(
-			"NAT4 port allocation: random (deltas=%d,%d) — birthday attack only", d1, d2)})
+	// Calculate sequential deltas
+	deltas := make([]int, 0, len(samples)-1)
+	for i := 1; i < len(samples); i++ {
+		d := samples[i].port - samples[i-1].port
+		if d < -30000 {
+			d += 65536 // port wraparound
+		}
+		deltas = append(deltas, d)
 	}
+
+	// Count negative deltas
+	negCount := 0
+	for _, d := range deltas {
+		if d < 0 {
+			negCount++
+		}
+	}
+
+	// Calculate drift rate (ports/second)
+	elapsed := samples[len(samples)-1].at.Sub(samples[0].at).Seconds()
+	totalDelta := samples[len(samples)-1].port - samples[0].port
+	if totalDelta < -30000 {
+		totalDelta += 65536
+	}
+	driftRate := float64(0)
+	if elapsed > 0 {
+		driftRate = float64(totalDelta) / elapsed
+	}
+
+	// Classify model
+	model := portModel{
+		Anchor:   samples[len(samples)-1].port,
+		AnchorAt: samples[len(samples)-1].at,
+	}
+
+	mostlyPositive := negCount <= len(deltas)/5
+
+	if mostlyPositive && driftRate > 10 {
+		// Global counter (CGNAT): high drift rate, mostly positive
+		model.Name = "global_counter"
+		model.DriftRate = driftRate
+		c.emit(EventLog, LogEvent{Level: "info", Message: fmt.Sprintf(
+			"NAT4 model: global_counter (drift=%.0f ports/sec) — predictable", driftRate)})
+	} else if mostlyPositive && len(deltas) >= 2 {
+		// Check for sequential (small consistent deltas)
+		median := sortedMedian(deltas)
+		maxDev := 0
+		for _, d := range deltas {
+			dev := d - median
+			if dev < 0 {
+				dev = -dev
+			}
+			if dev > maxDev {
+				maxDev = dev
+			}
+		}
+		if median >= 1 && median <= 10 && maxDev <= 3 {
+			model.Name = "sequential"
+			model.Delta = median
+			c.emit(EventLog, LogEvent{Level: "info", Message: fmt.Sprintf(
+				"NAT4 model: sequential (delta=%d) — predictable", median)})
+		} else {
+			model.Name = "random"
+			c.emit(EventLog, LogEvent{Level: "info", Message: fmt.Sprintf(
+				"NAT4 model: random (deltas vary widely) — birthday attack only")})
+		}
+	} else {
+		model.Name = "random"
+		c.emit(EventLog, LogEvent{Level: "info", Message: "NAT4 model: random — birthday attack only"})
+	}
+
+	// Store model for use in attemptHolePunch
+	c.peerConnsMu.Lock()
+	c.portModel = &model
+	c.peerConnsMu.Unlock()
+}
+
+func sortedMedian(vals []int) int {
+	sorted := make([]int, len(vals))
+	copy(sorted, vals)
+	sort.Ints(sorted)
+	return sorted[len(sorted)/2]
 }
 
 // stunQueryFresh sends a STUN binding request to a server from the given conn.
@@ -596,28 +683,23 @@ func (c *Client) attemptHolePunch(peerID string, isLAN bool) {
 	myNAT := c.natType
 
 	// ──────────────────────────────────────────────────────────
-	// Adaptive strategy based on both sides' NAT types.
+	// Adaptive hole punch strategy (integrated from p2p_punch.py)
 	//
-	// Research-backed success rates (Tailscale/RFC analysis):
-	//   Cone + Cone (NAT1-3 + NAT1-3):  ~90%+ with basic burst
-	//   Cone + Symmetric (NAT3 + NAT4): ~98% with 256-socket birthday attack
-	//   Symmetric + Symmetric (NAT4+NAT4): ~0.01% — relay is the answer
-	//
-	// Phase 1: Direct burst from main socket (all cases)
-	// Phase 2: Birthday attack — open N sockets, each punches (NAT3+NAT4)
-	// Phase 3: Port prediction ±range (NAT4 sequential allocation)
-	// Phase 4: Random port spray from main socket (NAT3+NAT4)
+	// Phase 1: Direct burst from main socket (all NAT types)
+	// Phase 2: Birthday Attack with progressive sending (NAT4)
+	// Phase 3: Drift-rate port prediction (global_counter NAT4)
+	// Phase 4: Random port spray — Cone side only (Cone+NAT4)
 	// ──────────────────────────────────────────────────────────
 	anyHard := peerNAT == NATSymmetric || myNAT == NATSymmetric
-	oneHard := anyHard && !(peerNAT == NATSymmetric && myNAT == NATSymmetric)
-	bothHard := peerNAT == NATSymmetric && myNAT == NATSymmetric
+	iAmCone := myNAT != NATSymmetric && peerNAT == NATSymmetric
 
-	// Phase 1: Rapid burst from main socket
 	punch := append([]byte("PUNCH:"), myID...)
 	burstCount := 20
 	if anyHard {
 		burstCount = 40
 	}
+
+	// Phase 1: Rapid burst from main socket
 	for i := 0; i < burstCount; i++ {
 		select {
 		case <-c.done:
@@ -628,60 +710,98 @@ func (c *Client) attemptHolePunch(peerID string, isLAN bool) {
 		time.Sleep(25 * time.Millisecond)
 	}
 
-	// Skip Phase 2-4 for LAN — no NAT to punch through
 	if isLAN {
 		return
 	}
 
-	// Phase 2: Birthday Attack (multi-socket parallel punch)
-	// Per Tailscale research: 256 sockets × ~4 packets each gives ~98% success
-	// for NAT3+NAT4 when the NAT3 side also probes random ports (Phase 4).
-	birthdaySockets := 0
-	birthdayPackets := 4
-	if anyHard {
-		// One or both sides NAT4: full birthday attack
-		birthdaySockets = 256
-		birthdayPackets = 4
+	if !anyHard {
+		return // Cone+Cone: Phase 1 is enough
 	}
 
-	if birthdaySockets > 0 {
-		var extraConns []*net.UDPConn
-		for i := 0; i < birthdaySockets; i++ {
-			conn, err := bypassListenUDP()
-			if err != nil {
-				continue
-			}
-			extraConns = append(extraConns, conn)
+	// Phase 2: Birthday Attack with progressive sending
+	// Progressive: first round sends to 3 targets, expanding each round.
+	// This avoids burning through the prediction window on Symmetric NATs
+	// where each outbound packet consumes a port from the NAT's pool.
+	birthdaySockets := 256
+	var extraConns []*net.UDPConn
+	for i := 0; i < birthdaySockets; i++ {
+		conn, err := bypassListenUDP()
+		if err != nil {
+			continue
 		}
+		extraConns = append(extraConns, conn)
+	}
 
-		if len(extraConns) > 0 {
-			var wg sync.WaitGroup
-			for _, conn := range extraConns {
-				wg.Add(1)
-				go func(c2 *net.UDPConn) {
-					defer wg.Done()
-					for j := 0; j < birthdayPackets; j++ {
-						c2.WriteToUDP(punch, addr)
-						time.Sleep(50 * time.Millisecond)
-					}
-				}(conn)
+	if len(extraConns) > 0 {
+		// Progressive: round 0 sends to addr only, round 1+ expands targets
+		for round := 0; round < 5; round++ {
+			select {
+			case <-c.done:
+				for _, conn := range extraConns {
+					conn.Close()
+				}
+				return
+			default:
 			}
-			wg.Wait()
+			for _, conn := range extraConns {
+				conn.WriteToUDP(punch, addr)
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+		// Keep sockets open for Phase 4 if we're the Cone side
+		if !iAmCone {
 			for _, conn := range extraConns {
 				conn.Close()
 			}
+			extraConns = nil
 		}
 	}
 
-	// Phase 3: Port prediction — only when at least one side is Symmetric (NAT4)
-	// Scan ±1000~1500 ports around the peer's known port.
-	if anyHard {
-		portRange := 1000
-		if bothHard {
-			portRange = 1500
+	// Phase 3: Port prediction based on NAT model
+	c.peerConnsMu.RLock()
+	model := c.portModel
+	c.peerConnsMu.RUnlock()
+
+	if model != nil && model.Name == "global_counter" && model.DriftRate > 0 {
+		// Drift-rate prediction: estimate where the NAT counter is NOW
+		elapsed := time.Since(model.AnchorAt).Seconds()
+		predicted := model.Anchor + int(model.DriftRate*elapsed)
+		// Uncertainty grows with time + self-consumption from birthday sockets
+		uncertainty := int(model.DriftRate*elapsed*0.5) + len(extraConns)*3
+		if uncertainty < 20 {
+			uncertainty = 20
 		}
+		if uncertainty > 2000 {
+			uncertainty = 2000
+		}
+		backward := int(model.DriftRate * elapsed * 0.15)
+		if backward < 10 {
+			backward = 10
+		}
+
+		c.emit(EventLog, LogEvent{Level: "info", Message: fmt.Sprintf(
+			"Port prediction: anchor=%d drift=%.0f/s elapsed=%.1fs predicted=%d ±%d",
+			model.Anchor, model.DriftRate, elapsed, predicted, uncertainty)})
+
+		for delta := -backward; delta <= uncertainty; delta++ {
+			p := ((predicted + delta - 1024) % 64512) + 1024 // wraparound to 1024-65535
+			udp.WriteToUDP(punch, &net.UDPAddr{IP: addr.IP, Port: p})
+		}
+	} else if model != nil && model.Name == "sequential" && model.Delta > 0 {
+		// Sequential prediction: simple delta extrapolation
 		basePort := addr.Port
-		for delta := -portRange; delta <= portRange; delta++ {
+		step := model.Delta
+		for i := -10; i <= 50; i++ {
+			p := basePort + i*step
+			if p <= 1024 || p > 65534 {
+				continue
+			}
+			udp.WriteToUDP(punch, &net.UDPAddr{IP: addr.IP, Port: p})
+		}
+	} else {
+		// Unknown model: scan ±1000 around known port
+		basePort := addr.Port
+		for delta := -1000; delta <= 1000; delta++ {
 			if delta == 0 {
 				continue
 			}
@@ -693,24 +813,30 @@ func (c *Client) attemptHolePunch(peerID string, isLAN bool) {
 		}
 	}
 
-	// Phase 4: Random port spray (NAT3+NAT4 scenario)
-	// The Cone side (NAT3) probes random ports on the Symmetric side's IP,
-	// hoping to hit one of the 256 birthday sockets' NAT mappings.
-	// ~1024 probes across 65535 ports with 256 targets = ~98% collision probability.
-	if oneHard && myNAT != NATSymmetric {
-		// We're the Cone side — spray random ports on peer's IP
-		for i := 0; i < 1024; i++ {
+	// Phase 4: Random port spray (Cone side of Cone+NAT4 pair)
+	// Use the birthday sockets to spray random ports on the Symmetric peer's IP.
+	// With 256 sockets open and ~1000 random probes, collision probability ≈98%.
+	if iAmCone && len(extraConns) > 0 {
+		sprayCount := 1024
+		for i := 0; i < sprayCount; i++ {
 			select {
 			case <-c.done:
-				return
+				break
 			default:
 			}
-			// Random port in ephemeral range (1024-65535)
-			b := make([]byte, 2)
-			rand.Read(b)
-			rPort := int(binary.BigEndian.Uint16(b))%64512 + 1024
-			udp.WriteToUDP(punch, &net.UDPAddr{IP: addr.IP, Port: rPort})
+			rPort := mrand.Intn(64512) + 1024
+			for _, conn := range extraConns {
+				conn.WriteToUDP(punch, &net.UDPAddr{IP: addr.IP, Port: rPort})
+			}
+			if i%50 == 0 {
+				time.Sleep(time.Millisecond) // yield to avoid flooding
+			}
 		}
+	}
+
+	// Cleanup remaining birthday sockets
+	for _, conn := range extraConns {
+		conn.Close()
 	}
 }
 
