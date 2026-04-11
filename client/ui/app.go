@@ -428,7 +428,7 @@ func (a *App) DoConnect(cfg core.ClientConfig) {
 		if !cfg.NoSTUN {
 			servers := cfg.STUNServers
 			if len(servers) == 0 {
-				servers = []string{"stun.cloudflare.com:3478", "stun.miwifi.com:3478"}
+				servers = []string{"8.141.118.226:3478", "stun.cloudflare.com:3478", "stun.miwifi.com:3478"}
 			}
 			client.DiscoverSTUN(servers)
 		}

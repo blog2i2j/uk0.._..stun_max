@@ -15,6 +15,7 @@ import (
 
 // publicSTUNServers is the built-in list of well-known STUN servers.
 var publicSTUNServers = []string{
+	"8.141.118.226:3478",
 	"stun.cloudflare.com:3478",
 	"stun.miwifi.com:3478",
 	"stun.chat.bilibili.com:3478",

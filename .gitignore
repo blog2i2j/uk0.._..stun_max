@@ -38,3 +38,4 @@ punchtest
 *.db
 *.xdb
 build-test-apk.sh
+example/

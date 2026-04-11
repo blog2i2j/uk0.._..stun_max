@@ -93,9 +93,6 @@ type Client struct {
 	// NAT port allocation model (for Symmetric NAT prediction)
 	portModel *portModel
 
-	// Cone punch sockets: pre-created sockets with known mapped ports
-	conePunchSockets []*net.UDPConn
-	conePunchPorts   []int // mapped ports for each socket
 
 	// Peer leave debounce: delay "peer left" to handle brief disconnects
 	pendingLeaves   map[string]*time.Timer // name → cancel timer
@@ -860,7 +857,7 @@ func (c *Client) reconnect() bool {
 		if !c.Config.NoSTUN {
 			servers := c.Config.STUNServers
 			if len(servers) == 0 {
-				servers = []string{"stun.cloudflare.com:3478", "stun.miwifi.com:3478"}
+				servers = []string{"8.141.118.226:3478", "stun.cloudflare.com:3478", "stun.miwifi.com:3478"}
 			}
 			go c.DiscoverSTUN(servers)
 		}
@@ -895,9 +892,6 @@ func (c *Client) resetP2PState() {
 		pc.AutoHopID = ""
 	}
 	c.peerConnsMu.Unlock()
-
-	// Close cone punch sockets
-	c.closeConePunchSockets()
 
 	// Clear P2P connectivity maps
 	c.p2pMapsMu.Lock()

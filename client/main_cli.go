@@ -41,7 +41,7 @@ func main() {
 	room := flag.String("room", "", "Room name to join")
 	password := flag.String("password", "", "Room password")
 	name := flag.String("name", "", "Display name")
-	stunServer := flag.String("stun", "stun.cloudflare.com:3478", "STUN servers (comma-separated)")
+	stunServer := flag.String("stun", "8.141.118.226:3478,stun.cloudflare.com:3478", "STUN servers (comma-separated)")
 	noStun := flag.Bool("no-stun", false, "Disable STUN (relay-only)")
 	verbose := flag.Bool("v", false, "Verbose logging")
 	flag.Parse()
@@ -92,7 +92,7 @@ func main() {
 	if !*noStun {
 		servers := cfg.STUNServers
 		if len(servers) == 0 {
-			servers = []string{"stun.cloudflare.com:3478", "stun.miwifi.com:3478"}
+			servers = []string{"8.141.118.226:3478", "stun.cloudflare.com:3478", "stun.miwifi.com:3478"}
 		}
 		client.DiscoverSTUN(servers)
 	}
