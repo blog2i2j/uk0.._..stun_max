@@ -170,49 +170,6 @@ jobs:
         with:
           files: build/*
 
-  build-windows7:
-    needs: create-release
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Go 1.20 (last version supporting Windows 7)
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.20'
-
-      - name: Patch go.mod for Go 1.20 compatibility
-        run: |
-          # Downgrade go.mod to 1.20 and remove toolchain directive
-          sed -i 's/^go .*/go 1.20/' go.mod
-          sed -i '/^toolchain/d' go.mod
-          # Remove incompatible dependencies and use older versions
-          go mod tidy -go=1.20 2>/dev/null || true
-
-      - name: Build Windows 7 compatible binaries (64-bit)
-        run: |
-          mkdir -p build
-
-          echo "Building Win7 CLI client (amd64)..."
-          GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -tags cli -ldflags="-s -w" -o "build/stun_max-cli-win7-amd64.exe" ./client/ 2>&1 || echo "CLI build failed"
-
-          echo "Building Win7 GUI client (amd64)..."
-          GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -ldflags="-s -w -H windowsgui" -o "build/stun_max-client-win7-amd64.exe" ./client/ 2>&1 || echo "GUI build failed"
-
-          echo "Building Win7 natcheck (amd64)..."
-          GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -ldflags="-s -w" -o "build/natcheck-win7-amd64.exe" ./tools/natcheck/ 2>&1 || echo "natcheck build failed"
-
-          ls -lh build/*win7* 2>/dev/null || echo "No Win7 binaries built"
-
-      - name: Upload to Release
-        uses: softprops/action-gh-release@v2
-        if: hashFiles('build/*win7*') != ''
-        with:
-          files: build/*win7*
-
   build-macos:
     needs: create-release
     runs-on: macos-latest
