@@ -170,6 +170,50 @@ jobs:
         with:
           files: build/*
 
+  build-windows7:
+    needs: create-release
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install go-legacy-win7 (Go fork with Win7 support)
+        run: |
+          curl -fsSL https://github.com/thongtech/go-legacy-win7/releases/download/v1.26.2-1/go-legacy-win7-1.26.2-1.linux_amd64.tar.gz -o /tmp/go-win7.tar.gz
+          sudo tar -C /usr/local -xzf /tmp/go-win7.tar.gz
+          echo "/usr/local/go-legacy-win7/bin" >> $GITHUB_PATH
+          export PATH="/usr/local/go-legacy-win7/bin:$PATH"
+          go version
+
+      - name: Build Windows 7 compatible binaries (64-bit)
+        env:
+          GOROOT: /usr/local/go-legacy-win7
+          PATH: /usr/local/go-legacy-win7/bin:/usr/bin:/bin:/usr/sbin:/sbin
+        run: |
+          export PATH="/usr/local/go-legacy-win7/bin:$PATH"
+          mkdir -p build
+
+          echo "Building Win7 GUI client (amd64)..."
+          GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -ldflags="-s -w -H windowsgui" -o "build/stun_max-client-win7-amd64.exe" ./client/
+
+          echo "Building Win7 CLI client (amd64)..."
+          GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -tags cli -ldflags="-s -w" -o "build/stun_max-cli-win7-amd64.exe" ./client/
+
+          echo "Building Win7 server (amd64)..."
+          GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -ldflags="-s -w" -o "build/stun_max-server-win7-amd64.exe" ./server/
+
+          echo "Building Win7 natcheck (amd64)..."
+          GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -ldflags="-s -w" -o "build/natcheck-win7-amd64.exe" ./tools/natcheck/
+
+          ls -lh build/*win7*
+
+      - name: Upload to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: build/*win7*
+
   build-macos:
     needs: create-release
     runs-on: macos-latest
