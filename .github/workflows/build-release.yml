@@ -170,6 +170,44 @@ jobs:
         with:
           files: build/*
 
+  build-windows-386:
+    needs: create-release
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: true
+
+      - name: Build Windows 32-bit binaries (Win7 compatible)
+        run: |
+          mkdir -p build
+
+          echo "Building Windows 32-bit GUI client (Win7)..."
+          GOOS=windows GOARCH=386 CGO_ENABLED=0 go build -ldflags="-s -w -H windowsgui" -o "build/stun_max-client-windows-386.exe" ./client/
+
+          echo "Building Windows 32-bit CLI client (Win7)..."
+          GOOS=windows GOARCH=386 CGO_ENABLED=0 go build -tags cli -ldflags="-s -w" -o "build/stun_max-cli-windows-386.exe" ./client/
+
+          echo "Building Windows 32-bit server (Win7)..."
+          GOOS=windows GOARCH=386 CGO_ENABLED=0 go build -ldflags="-s -w" -o "build/stun_max-server-windows-386.exe" ./server/
+
+          echo "Building Windows 32-bit natcheck (Win7)..."
+          GOOS=windows GOARCH=386 CGO_ENABLED=0 go build -ldflags="-s -w" -o "build/natcheck-windows-386.exe" ./tools/natcheck/
+
+          ls -lh build/*386*
+
+      - name: Upload to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: build/*386*
+
   build-macos:
     needs: create-release
     runs-on: macos-latest
